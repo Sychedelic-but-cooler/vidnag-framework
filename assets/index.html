@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YT-DLP WebUI</title>
+    <link rel="icon" type="image/png" href="/assets/logo.png">
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <img src="/assets/logo.svg" alt="YT-DLP Logo" class="logo logo-svg" onerror="this.onerror=null; this.src='/assets/logo.png'; this.classList.remove('logo-svg');">
+                <div class="header-text">
+                    <h1>YT-DLP WebUI</h1>
+                    <p class="subtitle">Download videos using yt-dlp</p>
+                </div>
+            </div>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-button active" data-tab="downloads">Downloads</button>
+            <button class="tab-button" data-tab="files">Browse Files</button>
+            <button class="tab-button" data-tab="settings">Settings</button>
+            <button class="tab-button" data-tab="logs">Logs</button>
+        </div>
+
+        <!-- Downloads Tab -->
+        <div id="downloads-tab" class="tab-content active">
+            <div class="downloads-split-layout">
+                <!-- Left Column: Form and Active Downloads (30%) -->
+                <div class="downloads-left-column">
+                    <section class="download-form glass-card">
+                        <h2>New Download</h2>
+                        <form id="new-download-form">
+                            <div class="form-group">
+                                <label for="video-url">Video URL(s)</label>
+                                <textarea id="video-url" placeholder="https://..." rows="3" required></textarea>
+                                <p class="form-help">Enter one or more URLs, one per line. Multiple URLs will use no cookies by default.</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="cookies-file">Cookies File (Optional)</label>
+                                <select id="cookies-file">
+                                    <option value="">None</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Download</button>
+                        </form>
+                    </section>
+
+                    <section class="active-downloads">
+                        <h2>Active & Queued</h2>
+                        <div id="active-downloads-list" class="downloads-list">
+                            <p class="empty-state">No active downloads</p>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Right Column: Past Downloads (70%) -->
+                <div class="downloads-right-column">
+                    <section class="past-downloads">
+                        <h2>Download History</h2>
+                        <div id="past-downloads-list" class="downloads-list">
+                            <p class="empty-state">No downloads yet</p>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
+
+        <!-- Browse Files Tab -->
+        <div id="files-tab" class="tab-content">
+            <section class="file-browser glass-card">
+                <div class="file-browser-header">
+                    <h2>Downloaded Files</h2>
+                    <div class="file-browser-actions">
+                        <button id="select-all-files-btn" class="btn btn-secondary btn-small">Select All</button>
+                        <button id="download-selected-btn" class="btn btn-primary btn-small" disabled>
+                            <span>⬇</span> Download as ZIP
+                        </button>
+                        <button id="delete-selected-btn" class="btn btn-danger btn-small" disabled>
+                            <span>🗑</span> Delete Selected
+                        </button>
+                    </div>
+                </div>
+
+                <div id="files-list" class="files-list">
+                    <p class="empty-state">Loading files...</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Settings Tab -->
+        <div id="settings-tab" class="tab-content">
+            <section class="version-info glass-card">
+                <h2>Version Information</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">App Version:</span>
+                        <span class="info-value" id="app-version">Loading...</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">yt-dlp Version:</span>
+                        <span class="info-value" id="ytdlp-version">Loading...</span>
+                    </div>
+                </div>
+                <button id="update-ytdlp-btn" class="btn btn-secondary">Update yt-dlp</button>
+            </section>
+
+            <section class="disk-space glass-card">
+                <h2>Disk Space</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <span class="info-label">Total:</span>
+                        <span class="info-value" id="disk-total">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Used:</span>
+                        <span class="info-value" id="disk-used">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Free:</span>
+                        <span class="info-value" id="disk-free">-</span>
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div id="disk-usage-bar" class="progress-fill" style="width: 0%"></div>
+                </div>
+                <p class="disk-percent" id="disk-percent">0% used</p>
+            </section>
+
+            <section class="queue-settings glass-card">
+                <h2>Queue Settings</h2>
+                <div class="form-group">
+                    <label for="max-concurrent">Max Concurrent Downloads:</label>
+                    <input type="number" id="max-concurrent" min="1" max="10" value="2">
+                    <p class="form-help">Maximum number of downloads running at the same time</p>
+                </div>
+                <div class="form-group">
+                    <label for="max-speed">Max Download Speed (MiB/s):</label>
+                    <input type="number" id="max-speed" min="0" value="0">
+                    <p class="form-help">0 = unlimited. Limit download speed for each file</p>
+                </div>
+                <div class="form-group">
+                    <label for="min-disk-space">Pause Downloads at (MB free):</label>
+                    <input type="number" id="min-disk-space" min="100" step="100" value="1000">
+                    <p class="form-help">Stop new downloads when disk space is below this threshold</p>
+                </div>
+                <button id="save-queue-settings-btn" class="btn btn-primary">Save Queue Settings</button>
+                <div id="queue-settings-status" class="settings-status" style="display: none;"></div>
+            </section>
+
+            <section class="preferences glass-card">
+                <h2>Preferences</h2>
+                <div class="preference-item">
+                    <div class="preference-info">
+                        <strong>Theme</strong>
+                        <p>Switch between dark and light mode</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="theme-toggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="preference-item">
+                    <div class="preference-info">
+                        <strong>Accent Colors</strong>
+                        <p>Choose your preferred color scheme</p>
+                    </div>
+                    <div style="min-width: 200px;">
+                        <select id="color-theme-select">
+                            <option value="synthwave">Synthwave</option>
+                            <option value="sunset">Sunset</option>
+                            <option value="blossom">Blossom</option>
+                            <option value="graphite">Graphite</option>
+                            <option value="forest">Forest</option>
+                            <option value="solarized">Solarized</option>
+                            <option value="arctic">Arctic</option>
+                            <option value="aqua">Aqua</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="preference-item">
+                    <div class="preference-info">
+                        <strong>Auto-Select Cookies</strong>
+                        <p>Automatically select matching cookie file based on URL domain</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="auto-cookie-toggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </section>
+
+            <section class="cleanup glass-card">
+                <h2>Cleanup</h2>
+                <p>Remove failed downloads and orphaned files to free up space.</p>
+                <div class="form-group">
+                    <label for="cleanup-days">Remove failed downloads older than:</label>
+                    <select id="cleanup-days">
+                        <option value="1">1 day</option>
+                        <option value="7" selected>7 days</option>
+                        <option value="30">30 days</option>
+                        <option value="90">90 days</option>
+                    </select>
+                </div>
+                <button id="cleanup-btn" class="btn btn-danger">Clean Up Failed Downloads</button>
+                <div id="cleanup-stats" class="cleanup-stats" style="display: none;">
+                    <p><strong>Cleanup Results:</strong></p>
+                    <p>Downloads removed: <span id="cleanup-downloads">0</span></p>
+                    <p>Files removed: <span id="cleanup-files">0</span></p>
+                    <p>Space freed: <span id="cleanup-space">0 MB</span></p>
+                </div>
+            </section>
+
+            <footer class="settings-footer">
+                <p>YT-DLP WebUI &copy; 2025 Maintained by Tidnag</p>
+                <p class="footer-note">Built with yt-dlp for easy video downloading</p>
+            </footer>
+        </div>
+
+        <!-- Logs Tab -->
+        <div id="logs-tab" class="tab-content">
+            <section class="logs-container glass-card">
+                <h2>System Logs</h2>
+                <p style="color: var(--text-muted); margin-bottom: 1rem; font-size: 0.9rem;">
+                    Real-time logs showing yt-dlp output, download progress, and system events. Use filters to focus on specific components or log levels.
+                </p>
+
+                <div class="logs-controls">
+                    <div class="filter-group">
+                        <label for="log-level-filter">Level:</label>
+                        <select id="log-level-filter">
+                            <option value="">All Levels</option>
+                            <option value="INFO">Info</option>
+                            <option value="SUCCESS">Success</option>
+                            <option value="WARNING">Warning</option>
+                            <option value="ERROR">Error</option>
+                            <option value="DEBUG">Debug</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="log-component-filter">Component:</label>
+                        <select id="log-component-filter">
+                            <option value="">All Components</option>
+                            <option value="System">System</option>
+                            <option value="API">API</option>
+                            <option value="Download">Download</option>
+                            <option value="YT-DLP">YT-DLP</option>
+                            <option value="YT-DLP-ERR">YT-DLP-ERR</option>
+                            <option value="Queue">Queue</option>
+                            <option value="Cleanup">Cleanup</option>
+                            <option value="Settings">Settings</option>
+                            <option value="Test">Test</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="log-download-filter">Download ID:</label>
+                        <input type="text" id="log-download-filter" placeholder="Filter by download ID">
+                    </div>
+                    <button id="test-log-btn" class="btn btn-primary btn-small">🧪 Test Log</button>
+                    <button id="clear-logs-btn" class="btn btn-danger btn-small">Clear Display</button>
+                    <button id="pause-logs-btn" class="btn btn-secondary btn-small">Pause</button>
+                </div>
+
+                <div id="logs-display" class="logs-display">
+                    <p class="empty-state">Initializing log system...</p>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div id="toast-container"></div>
+
+    <script src="/assets/app.js"></script>
+</body>
+</html>
