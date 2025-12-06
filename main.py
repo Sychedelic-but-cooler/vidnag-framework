@@ -1505,6 +1505,61 @@ async def update_ytdlp():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/settings/clear-ytdlp-cache")
+async def clear_ytdlp_cache():
+    """
+    Clear yt-dlp cache to resolve signature solving and format extraction issues.
+    
+    Useful when:
+    - YouTube changes their signature algorithm
+    - Format extraction fails with signature solving errors
+    - Getting "Some formats may be missing" warnings
+    
+    This removes cached extractor data and forces yt-dlp to refresh on next use.
+    """
+    try:
+        await emit_log("INFO", "Settings", "Starting yt-dlp cache cleanup")
+        
+        cache_dirs = []
+        
+        # Cache location 1: APPDATA\yt-dlp (Windows)
+        appdata_cache = os.path.join(os.environ.get("APPDATA", ""), "yt-dlp")
+        if appdata_cache and os.path.exists(appdata_cache):
+            cache_dirs.append(appdata_cache)
+        
+        # Cache location 2: ~/.yt-dlp (Home directory)
+        home_cache = os.path.expanduser("~/.yt-dlp")
+        if os.path.exists(home_cache):
+            cache_dirs.append(home_cache)
+        
+        # Cache location 3: ~/.config/yt-dlp (Linux/macOS)
+        config_cache = os.path.expanduser("~/.config/yt-dlp")
+        if os.path.exists(config_cache):
+            cache_dirs.append(config_cache)
+        
+        cleared_count = 0
+        for cache_dir in cache_dirs:
+            try:
+                shutil.rmtree(cache_dir)
+                cleared_count += 1
+                await emit_log("INFO", "Settings", f"Cleared yt-dlp cache: {cache_dir}")
+            except Exception as e:
+                await emit_log("WARNING", "Settings", f"Failed to clear cache {cache_dir}: {str(e)}")
+        
+        if cleared_count == 0:
+            message = "No yt-dlp cache directories found"
+            await emit_log("INFO", "Settings", message)
+        else:
+            message = f"Cleared {cleared_count} yt-dlp cache director(ies)"
+            await emit_log("SUCCESS", "Settings", message)
+        
+        return {"message": message, "cleared": cleared_count}
+    
+    except Exception as e:
+        await emit_log("ERROR", "Settings", f"yt-dlp cache cleanup error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/files/thumbnail/{filename}")
 async def get_thumbnail(filename: str):
     """Serve thumbnail images"""

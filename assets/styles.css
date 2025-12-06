@@ -928,6 +928,28 @@ body[data-theme="light"] select option:checked {
     box-shadow: 0 8px 20px rgba(var(--secondary-color-rgb), 0.4);
 }
 
+.button-group {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+}
+
+.button-group .btn {
+    flex: 1;
+    min-width: 200px;
+}
+
+@media (max-width: 768px) {
+    .button-group {
+        flex-direction: column;
+    }
+
+    .button-group .btn {
+        min-width: 100%;
+    }
+}
+
 .btn-danger {
     background: linear-gradient(135deg, #ff4444, #cc0000);
     color: white;

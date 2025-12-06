@@ -682,6 +682,37 @@ async function updateYtdlp() {
     }
 }
 
+async function clearYtdlpCache() {
+    const button = document.getElementById('clear-cache-btn');
+    
+    if (!confirm('Clear yt-dlp cache? This will force re-extraction of video formats on next download.')) {
+        return;
+    }
+    
+    button.disabled = true;
+    button.textContent = 'Clearing...';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/settings/clear-ytdlp-cache`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Clear failed');
+        }
+
+        const result = await response.json();
+        showToast(result.message, 'success');
+
+    } catch (error) {
+        showToast('Failed to clear cache: ' + error.message, 'error');
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Clear yt-dlp Cache';
+    }
+}
+
 async function cleanupDownloads() {
     const button = document.getElementById('cleanup-btn');
     const days = parseInt(document.getElementById('cleanup-days').value);
@@ -1357,6 +1388,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Settings buttons
     document.getElementById('save-queue-settings-btn').addEventListener('click', saveQueueSettings);
     document.getElementById('update-ytdlp-btn').addEventListener('click', updateYtdlp);
+    document.getElementById('clear-cache-btn').addEventListener('click', clearYtdlpCache);
     document.getElementById('cleanup-btn').addEventListener('click', cleanupDownloads);
 
     // Preference toggles
