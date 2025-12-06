@@ -961,7 +961,7 @@ class YtdlpService:
                             speed_str = speed_match.group(1).strip()
 
                         # Determine status based on progress
-                        status = "processing" if progress >= 99.9 else "downloading"
+                        status = "processing" if progress >= 99 else "downloading"
 
                         # Send progress via WebSocket
                         await YtdlpService.broadcast_progress(download_id, {
