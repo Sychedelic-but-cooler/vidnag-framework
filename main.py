@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 # Type hints for better code clarity
 from typing import Optional, List
+from pathlib import Path
 
 # Data structures and utilities
 from collections import deque
@@ -1606,13 +1607,26 @@ async def get_version():
 
 @app.get("/api/settings/disk-space", response_model=DiskSpaceInfo)
 async def get_disk_space():
-    """Get disk space information for downloads directory"""
+    """Get disk space information for downloads directory only"""
+    downloads_path = Path("downloads")
+    
+    # Calculate total space used by files in downloads folder
+    used_space = 0
+    if downloads_path.exists():
+        for item in downloads_path.rglob("*"):
+            if item.is_file():
+                used_space += item.stat().st_size
+    
+    # Get total available space on the volume containing downloads
     stat = shutil.disk_usage("downloads")
+    free_space = stat.free
+    total_space = used_space + free_space
+    
     return DiskSpaceInfo(
-        total=stat.total,
-        used=stat.used,
-        free=stat.free,
-        percent=(stat.used / stat.total) * 100
+        total=total_space,
+        used=used_space,
+        free=free_space,
+        percent=(used_space / total_space * 100) if total_space > 0 else 0
     )
 
 
