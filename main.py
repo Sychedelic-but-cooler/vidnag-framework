@@ -341,6 +341,10 @@ app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 active_connections: dict[str, list[WebSocket]] = {}
 log_websockets: list[WebSocket] = []
 
+# WebSocket connection limits to prevent memory exhaustion
+MAX_LOG_WEBSOCKET_CONNECTIONS = 100
+WEBSOCKET_IDLE_TIMEOUT = 300  # 5 minutes in seconds - disconnect idle connections
+
 # In-memory circular buffer for logs
 # Stores last 1000 log entries for quick retrieval by the frontend
 # maxlen=1000 means old logs are automatically dropped when buffer fills
@@ -427,14 +431,16 @@ def _cleanup_rate_limit_store():
     
     Prevents unbounded memory growth in long-running applications
     by removing inactive IPs. Triggered by time interval or IP count.
+    
+    Uses two-tier cleanup:
+    - First: Remove IPs inactive for 30 minutes
+    - If still over 5000 IPs: Aggressively remove IPs inactive for 5 minutes
     """
     global rate_limit_store
     now = datetime.now(timezone.utc).timestamp()
     
-    # Remove IPs with no requests in the last hour
-    # (configurable via cleanup logic, but 1 hour is reasonable default)
-    cutoff_time = now - 3600  # 1 hour
-    
+    # First pass: Remove IPs with no requests in the last 30 minutes
+    cutoff_time = now - 1800  # 30 minutes
     expired_ips = [
         ip for ip, reqs in rate_limit_store.items()
         if reqs and reqs[-1] < cutoff_time
@@ -443,8 +449,47 @@ def _cleanup_rate_limit_store():
     for ip in expired_ips:
         del rate_limit_store[ip]
     
-    if expired_ips:
-        logger.debug(f"Rate limit cleanup: removed {len(expired_ips)} inactive IPs")
+    removed_count = len(expired_ips)
+    if removed_count > 0:
+        logger.debug(f"Rate limit cleanup: removed {removed_count} inactive IPs (30+ min)")
+    
+    # Second pass: If still too many IPs, do aggressive cleanup (5 minutes)
+    if len(rate_limit_store) > 5000:
+        aggressive_cutoff = now - 300  # 5 minutes
+        expired_ips = [
+            ip for ip, reqs in rate_limit_store.items()
+            if reqs and reqs[-1] < aggressive_cutoff
+        ]
+        
+        for ip in expired_ips:
+            del rate_limit_store[ip]
+        
+        if expired_ips:
+            logger.warning(f"Rate limit aggressive cleanup: removed {len(expired_ips)} IPs (5+ min) - store was at {len(rate_limit_store) + len(expired_ips)} entries")
+
+
+# Download timeout configuration (in seconds)
+# Prevent hung downloads from consuming resources indefinitely
+# Most video downloads complete within this timeframe
+DOWNLOAD_TIMEOUT_SECONDS = 3600  # 1 hour
+
+
+async def download_with_timeout(download_id: str, url: str, cookies_file: Optional[str] = None):
+    """
+    Wrapper that adds timeout to download operations.
+    Prevents hung downloads from consuming resources indefinitely.
+    
+    If timeout is exceeded, the download is forcefully terminated.
+    """
+    try:
+        await asyncio.wait_for(
+            YtdlpService.download_video(download_id, url, cookies_file),
+            timeout=DOWNLOAD_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        await emit_log("ERROR", "Download", f"Download exceeded timeout ({DOWNLOAD_TIMEOUT_SECONDS}s) - terminated", download_id)
+        # The download_video method's exception handler will mark as failed
+        # Any subprocess is already terminated by asyncio.wait_for
 
 
 # Download Queue Manager
@@ -509,6 +554,7 @@ class DownloadQueueManager:
 
                 # Create a new async task for the download (runs in background)
                 # This allows the queue processor to continue handling other downloads
+                # Wrapped with timeout to prevent hung downloads
                 asyncio.create_task(self._download_wrapper(download_id, url, cookies_file))
 
                 # Mark this queue item as processed
@@ -525,9 +571,16 @@ class DownloadQueueManager:
         Wrapper around the actual download function.
         Ensures the download is always removed from active_downloads
         even if the download fails or throws an exception.
+        Includes timeout protection to prevent hung downloads.
         """
         try:
-            await YtdlpService.download_video(download_id, url, cookies_file)
+            await download_with_timeout(download_id, url, cookies_file)
+        except asyncio.TimeoutError:
+            # Already logged in download_with_timeout
+            pass
+        except Exception as e:
+            # Catch any other exceptions
+            logger.error(f"Download wrapper error for {download_id}: {e}")
         finally:
             # Always remove from active downloads, even if download failed
             self.active_downloads.discard(download_id)
@@ -1127,6 +1180,19 @@ class YtdlpService:
                 })
 
         except Exception as e:
+            # Ensure process is terminated if still running
+            if 'process' in locals() and process and not process.returncode:
+                try:
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=5)
+                    except asyncio.TimeoutError:
+                        # Force kill if terminate didn't work
+                        process.kill()
+                        await process.wait()
+                except Exception as cleanup_error:
+                    logger.error(f"Error terminating process for {download_id}: {cleanup_error}")
+            
             with get_db() as db:
                 DatabaseService.mark_failed(db, download_id, str(e))
 
@@ -1380,15 +1446,34 @@ async def websocket_endpoint(websocket: WebSocket, download_id: str):
                     "progress": download.progress
                 })
 
-        # Keep connection alive
+        # Keep connection alive with timeout
+        # Disconnect if client stops responding for 5 minutes
         while True:
-            await websocket.receive_text()
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=WEBSOCKET_IDLE_TIMEOUT)
+            except asyncio.TimeoutError:
+                break
 
     except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"WebSocket error for download {download_id}: {e}")
+    finally:
+        # Ensure proper cleanup
         if download_id in active_connections:
-            active_connections[download_id].remove(websocket)
+            try:
+                active_connections[download_id].remove(websocket)
+            except ValueError:
+                pass  # Already removed
+            
             if not active_connections[download_id]:
                 del active_connections[download_id]
+        
+        # Close connection if still open
+        try:
+            await websocket.close()
+        except Exception:
+            pass  # Already closed
 
 
 @app.post("/api/logs/test")
@@ -1434,6 +1519,14 @@ async def get_logs(
 async def logs_websocket(websocket: WebSocket):
     """WebSocket endpoint for real-time log streaming"""
     logger.info(f"[DEBUG] WebSocket connection attempt from {websocket.client}")
+    
+    # Enforce maximum WebSocket connections to prevent memory exhaustion
+    if len(log_websockets) >= MAX_LOG_WEBSOCKET_CONNECTIONS:
+        await websocket.close(code=1008, reason="Server at max WebSocket capacity")
+        logger.warning(f"[DEBUG] WebSocket connection rejected - max capacity ({MAX_LOG_WEBSOCKET_CONNECTIONS}) reached")
+        await emit_log("WARNING", "System", f"WebSocket connection rejected - max capacity reached from {websocket.client}")
+        return
+    
     await websocket.accept()
     logger.info(f"[DEBUG] WebSocket accepted, adding to log_websockets list")
     log_websockets.append(websocket)
@@ -1447,14 +1540,28 @@ async def logs_websocket(websocket: WebSocket):
         for log in log_buffer:
             await websocket.send_json(log)
 
-        # Keep connection alive with heartbeat
+        # Keep connection alive with heartbeat and idle timeout
         # The emit_log function will send new logs to all connected clients
         # We just need to keep this connection alive by sending periodic pings
+        idle_timeout_task = None
+        last_activity = datetime.now(timezone.utc)
+        
         while True:
             try:
                 # Send ping every 30 seconds to keep connection alive
                 await asyncio.sleep(30)
-                await websocket.send_json({"type": "ping", "timestamp": datetime.now(timezone.utc).isoformat()})
+                
+                # Check for idle timeout (client hasn't received messages in WEBSOCKET_IDLE_TIMEOUT seconds)
+                now = datetime.now(timezone.utc)
+                if (now - last_activity).total_seconds() > WEBSOCKET_IDLE_TIMEOUT:
+                    logger.info(f"[DEBUG] WebSocket idle timeout: {websocket.client}")
+                    break
+                
+                await websocket.send_json({"type": "ping", "timestamp": now.isoformat()})
+                last_activity = now
+            except asyncio.CancelledError:
+                logger.info(f"[DEBUG] WebSocket cancelled: {websocket.client}")
+                raise
             except Exception as e:
                 logger.error(f"[DEBUG] Error in logs WebSocket loop: {e}")
                 break
@@ -1464,9 +1571,17 @@ async def logs_websocket(websocket: WebSocket):
     except Exception as e:
         logger.error(f"[DEBUG] WebSocket error: {e}")
     finally:
+        # Ensure proper cleanup of WebSocket connection
         if websocket in log_websockets:
             log_websockets.remove(websocket)
             logger.info(f"[DEBUG] Removed WebSocket from list. Remaining: {len(log_websockets)}")
+        
+        # Clean up any references
+        try:
+            await websocket.close()
+        except Exception:
+            pass  # Already closed
+        
         # Don't emit log here as it might cause issues during shutdown
 
 
@@ -1797,7 +1912,8 @@ async def delete_file(download_id: str, db: Session = Depends(get_db_session)):
     except HTTPException:
         raise
     except Exception as e:
-        await emit_log("ERROR", "API", f"Failed to delete file {filename}: {str(e)}")
+        display_name = download.filename if 'download' in locals() else "unknown"
+        await emit_log("ERROR", "API", f"Failed to delete file {display_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
