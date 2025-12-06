@@ -85,6 +85,65 @@ def cleanup_old_logs():
         logger.error(f"Error during log cleanup: {e}")
 
 
+def set_directory_permissions():
+    """
+    Set appropriate file permissions on critical application directories.
+    
+    Ensures:
+    - downloads/ directory: readable/writable by app, readable by others (755)
+    - logs/ directory: readable/writable by app, readable by others (755)
+    - data.db: readable/writable by app only (600)
+    - cookies/ directory: readable/writable by app (700)
+    - admin_settings.json: readable/writable by app (600)
+    
+    Permissions work correctly on Linux/macOS. Windows NTFS has different 
+    permission model but these settings don't harm and ensure cross-platform compatibility.
+    """
+    try:
+        import stat
+        
+        # Directories that should be 755 (rwxr-xr-x)
+        # Owner can read/write/execute, others can read/execute
+        rwx_r_r_dirs = ["downloads", "logs", "assets", "backups"]
+        
+        for dir_path in rwx_r_r_dirs:
+            if os.path.exists(dir_path):
+                try:
+                    os.chmod(dir_path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+                    logger.debug(f"Set permissions 755 on {dir_path}")
+                except Exception as e:
+                    logger.warning(f"Could not set permissions on {dir_path}: {e}")
+        
+        # Directories that should be 700 (rwx------)
+        # Owner can read/write/execute, others cannot access
+        rwx_only_dirs = ["cookies"]
+        
+        for dir_path in rwx_only_dirs:
+            if os.path.exists(dir_path):
+                try:
+                    os.chmod(dir_path, stat.S_IRWXU)
+                    logger.debug(f"Set permissions 700 on {dir_path}")
+                except Exception as e:
+                    logger.warning(f"Could not set permissions on {dir_path}: {e}")
+        
+        # Files that should be 600 (rw-------)
+        # Owner can read/write, others cannot access
+        rw_only_files = ["data.db", "admin_settings.json"]
+        
+        for file_path in rw_only_files:
+            if os.path.exists(file_path):
+                try:
+                    os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
+                    logger.debug(f"Set permissions 600 on {file_path}")
+                except Exception as e:
+                    logger.warning(f"Could not set permissions on {file_path}: {e}")
+        
+        logger.info("Directory permissions set successfully")
+    
+    except Exception as e:
+        logger.error(f"Error setting directory permissions: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -96,6 +155,9 @@ async def lifespan(app: FastAPI):
     init_db()  # Create database tables if they don't exist
     os.makedirs("downloads", exist_ok=True)  # Ensure download directory exists
     os.makedirs("cookies", exist_ok=True)    # Ensure cookies directory exists
+
+    # Set proper file permissions on critical directories
+    set_directory_permissions()
 
     # Load and validate admin settings from admin_settings.json
     # This must happen before any middleware or endpoints are initialized
