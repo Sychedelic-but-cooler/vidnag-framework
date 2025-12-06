@@ -312,7 +312,7 @@ function renderDownloads(containerId, downloads) {
         <div class="download-item ${download.status === 'completed' && download.thumbnail ? 'with-thumbnail' : ''}" data-id="${download.id}">
             ${download.status === 'completed' && download.thumbnail ? `
                 <div class="download-thumbnail">
-                    <img src="${API_BASE}/api/files/thumbnail/${encodeURIComponent(download.thumbnail)}"
+                    <img src="${API_BASE}/api/files/thumbnail/${download.id}"
                          alt="Video thumbnail"
                          onerror="this.style.display='none'">
                 </div>
@@ -362,17 +362,17 @@ function renderDownloads(containerId, downloads) {
 
                 <div class="download-actions">
                     ${download.status === 'completed' && download.filename ? `
-                        <button class="btn btn-primary btn-small" onclick="playVideo('${escapeHtml(download.filename)}', '${escapeHtml(download.url)}')">
+                        <button class="btn btn-primary btn-small" onclick="playVideo('${download.id}', '${escapeHtml(download.url)}')">
                             <span>▶</span> Play
                         </button>
-                        <button class="btn btn-secondary btn-small" onclick="downloadVideo('${escapeHtml(download.filename)}')">
+                        <button class="btn btn-secondary btn-small" onclick="downloadVideo('${download.id}', '${escapeHtml(download.filename)}')">
                             <span>⬇</span> Download
                         </button>
                     ` : ''}
                     ${download.status === 'failed' ? `
                         <button class="btn btn-secondary btn-small" onclick="retryDownload('${escapeHtml(download.url)}')">Retry</button>
                     ` : ''}
-                    <button class="btn btn-danger btn-small" onclick="deleteDownload('${download.id}')">Delete</button>
+                    <button class="btn btn-danger btn-small" onclick="deleteDownload('${download.id}', event)">Delete</button>
                 </div>
             </div>
         </div>
@@ -496,30 +496,56 @@ function updateDownloadUI(downloadId, data) {
     }
 }
 
-async function deleteDownload(downloadId) {
-    if (!confirm('Are you sure you want to delete this download?')) {
-        return;
-    }
+async function deleteDownload(downloadId, event) {
+    const button = event?.target.closest('button');
 
-    try {
-        const response = await fetch(`${API_BASE}/api/downloads/${downloadId}`, {
-            method: 'DELETE'
-        });
+    // Check if button is already in confirm state
+    if (button?.dataset.confirmDelete === 'true') {
+        // Second click - actually delete
+        button.disabled = true;
 
-        if (!response.ok) throw new Error('Failed to delete download');
+        try {
+            const response = await fetch(`${API_BASE}/api/downloads/${downloadId}`, {
+                method: 'DELETE'
+            });
 
-        showToast('Download deleted', 'success');
-        loadDownloads();
+            if (!response.ok) throw new Error('Failed to delete download');
 
-        // Close WebSocket if active
-        const ws = activeWebSockets.get(downloadId);
-        if (ws) {
-            ws.close();
-            activeWebSockets.delete(downloadId);
+            showToast('Download deleted', 'success');
+            loadDownloads();
+
+            // Close WebSocket if active
+            const ws = activeWebSockets.get(downloadId);
+            if (ws) {
+                ws.close();
+                activeWebSockets.delete(downloadId);
+            }
+
+        } catch (error) {
+            showToast('Failed to delete download: ' + error.message, 'error');
+            button.disabled = false;
+            resetDeleteButton(button);
         }
+    } else {
+        // First click - show confirmation state
+        if (button) {
+            button.dataset.confirmDelete = 'true';
+            button.dataset.originalText = button.innerHTML;
+            button.innerHTML = 'Confirm Delete?';
+            button.classList.add('btn-confirm-delete');
 
-    } catch (error) {
-        showToast('Failed to delete download: ' + error.message, 'error');
+            // Reset after 3 seconds if not clicked again
+            setTimeout(() => resetDeleteButton(button), 3000);
+        }
+    }
+}
+
+function resetDeleteButton(button) {
+    if (button && button.dataset.confirmDelete === 'true') {
+        button.dataset.confirmDelete = 'false';
+        button.innerHTML = button.dataset.originalText || 'Delete';
+        button.classList.remove('btn-confirm-delete');
+        delete button.dataset.originalText;
     }
 }
 
@@ -529,23 +555,23 @@ function retryDownload(url) {
     showToast('URL filled in form. Click Download to retry.', 'info');
 }
 
-function downloadVideo(filename) {
-    window.open(`${API_BASE}/api/files/download/${encodeURIComponent(filename)}`, '_blank');
+function downloadVideo(downloadId, displayName) {
+    window.open(`${API_BASE}/api/files/download/${downloadId}`, '_blank');
     showToast('Download started', 'success');
 }
 
-function playVideo(filename, title) {
+function playVideo(downloadId, title) {
     // Create modal for video player
     const modal = document.createElement('div');
     modal.className = 'video-modal';
     modal.innerHTML = `
         <div class="video-modal-content">
             <div class="video-modal-header">
-                <h3>${escapeHtml(title || filename)}</h3>
+                <h3>${escapeHtml(title)}</h3>
                 <button class="video-modal-close" onclick="this.closest('.video-modal').remove()">×</button>
             </div>
             <video controls autoplay style="width: 100%; max-height: 70vh;">
-                <source src="${API_BASE}/api/files/video/${encodeURIComponent(filename)}">
+                <source src="${API_BASE}/api/files/video/${downloadId}">
                 Your browser does not support the video tag.
             </video>
         </div>
@@ -1116,10 +1142,8 @@ function renderFiles(files) {
     }
 
     container.innerHTML = files.map(file => {
-        // Use base64 encoding to safely store filename in data attribute
-        const encodedFilename = btoa(encodeURIComponent(file.filename));
         return `
-        <div class="file-item" data-filename-encoded="${encodedFilename}">
+        <div class="file-item" data-download-id="${file.id}">
             <input type="checkbox" class="file-checkbox">
             <div class="file-info">
                 <span class="file-name">${escapeHtml(file.filename)}</span>
@@ -1147,9 +1171,8 @@ function attachFileEventListeners() {
     document.querySelectorAll('.file-checkbox').forEach(checkbox => {
         checkbox.addEventListener('change', function() {
             const fileItem = this.closest('.file-item');
-            const encodedFilename = fileItem.dataset.filenameEncoded;
-            const filename = decodeURIComponent(atob(encodedFilename));
-            toggleFileSelection(filename, this.checked);
+            const downloadId = fileItem.dataset.downloadId;
+            toggleFileSelection(downloadId, this.checked);
         });
     });
 
@@ -1157,32 +1180,30 @@ function attachFileEventListeners() {
     document.querySelectorAll('.file-download-btn').forEach(button => {
         button.addEventListener('click', function() {
             const fileItem = this.closest('.file-item');
-            const encodedFilename = fileItem.dataset.filenameEncoded;
-            const filename = decodeURIComponent(atob(encodedFilename));
-            downloadVideo(filename);
+            const downloadId = fileItem.dataset.downloadId;
+            const filename = fileItem.querySelector('.file-name').textContent;
+            downloadVideo(downloadId, filename);
         });
     });
 
     // Add event listeners to all delete buttons
     document.querySelectorAll('.file-delete-btn').forEach(button => {
-        button.addEventListener('click', function() {
+        button.addEventListener('click', function(event) {
             const fileItem = this.closest('.file-item');
-            const encodedFilename = fileItem.dataset.filenameEncoded;
-            const filename = decodeURIComponent(atob(encodedFilename));
-            deleteFile(filename);
+            const downloadId = fileItem.dataset.downloadId;
+            deleteFile(downloadId, event);
         });
     });
 }
 
-function toggleFileSelection(filename, checked) {
-    const encodedFilename = btoa(encodeURIComponent(filename));
-    const fileItem = document.querySelector(`.file-item[data-filename-encoded="${encodedFilename}"]`);
+function toggleFileSelection(downloadId, checked) {
+    const fileItem = document.querySelector(`.file-item[data-download-id="${downloadId}"]`);
 
     if (checked) {
-        selectedFiles.add(filename);
+        selectedFiles.add(downloadId);
         fileItem.classList.add('selected');
     } else {
-        selectedFiles.delete(filename);
+        selectedFiles.delete(downloadId);
         fileItem.classList.remove('selected');
     }
 
@@ -1224,83 +1245,121 @@ function toggleSelectAll() {
     allCheckboxes.forEach(checkbox => {
         checkbox.checked = shouldSelect;
         const fileItem = checkbox.closest('.file-item');
-        const encodedFilename = fileItem.dataset.filenameEncoded;
-        const filename = decodeURIComponent(atob(encodedFilename));
-        toggleFileSelection(filename, shouldSelect);
+        const downloadId = fileItem.dataset.downloadId;
+        toggleFileSelection(downloadId, shouldSelect);
     });
 }
 
-async function deleteFile(filename) {
-    if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
-        return;
-    }
+async function deleteFile(downloadId, event) {
+    const button = event?.target.closest('button');
+    const fileItem = document.querySelector(`.file-item[data-download-id="${downloadId}"]`);
+    const filename = fileItem ? fileItem.querySelector('.file-name').textContent : 'this file';
 
-    try {
-        const response = await fetch(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, {
-            method: 'DELETE'
-        });
+    // Check if button is already in confirm state
+    if (button?.dataset.confirmDelete === 'true') {
+        // Second click - actually delete
+        button.disabled = true;
 
-        if (!response.ok) throw new Error('Failed to delete file');
-
-        showToast('File deleted successfully', 'success');
-        selectedFiles.delete(filename);
-        loadFiles();
-
-        // Also reload downloads list to update the Downloads tab
-        loadDownloads();
-
-    } catch (error) {
-        showToast('Failed to delete file: ' + error.message, 'error');
-    }
-}
-
-async function deleteSelectedFiles() {
-    if (selectedFiles.size === 0) return;
-
-    const count = selectedFiles.size;
-    if (!confirm(`Are you sure you want to delete ${count} file${count > 1 ? 's' : ''}?`)) {
-        return;
-    }
-
-    let successCount = 0;
-    let failCount = 0;
-
-    for (const filename of selectedFiles) {
         try {
-            const response = await fetch(`${API_BASE}/api/files/${encodeURIComponent(filename)}`, {
+            const response = await fetch(`${API_BASE}/api/files/${downloadId}`, {
                 method: 'DELETE'
             });
 
-            if (response.ok) {
-                successCount++;
-            } else {
-                failCount++;
-            }
+            if (!response.ok) throw new Error('Failed to delete file');
+
+            showToast('File deleted successfully', 'success');
+            selectedFiles.delete(downloadId);
+            loadFiles();
+
+            // Also reload downloads list to update the Downloads tab
+            loadDownloads();
+
         } catch (error) {
-            console.error(`Failed to delete ${filename}:`, error);
-            failCount++;
+            showToast('Failed to delete file: ' + error.message, 'error');
+            button.disabled = false;
+            resetDeleteButton(button);
+        }
+    } else {
+        // First click - show confirmation state
+        if (button) {
+            button.dataset.confirmDelete = 'true';
+            button.dataset.originalText = button.innerHTML;
+            button.innerHTML = '<span>✓</span> Confirm?';
+            button.classList.add('btn-confirm-delete');
+
+            // Reset after 3 seconds if not clicked again
+            setTimeout(() => resetDeleteButton(button), 3000);
         }
     }
+}
 
-    if (successCount > 0 && failCount === 0) {
-        showToast(`${successCount} file${successCount > 1 ? 's' : ''} deleted successfully`, 'success');
-    } else if (successCount > 0 && failCount > 0) {
-        showToast(`${successCount} file${successCount > 1 ? 's' : ''} deleted, ${failCount} failed`, 'info');
+async function deleteSelectedFiles(event) {
+    if (selectedFiles.size === 0) return;
+
+    const button = event?.target.closest('button');
+    const count = selectedFiles.size;
+
+    // Check if button is already in confirm state
+    if (button?.dataset.confirmDelete === 'true') {
+        // Second click - actually delete
+        button.disabled = true;
+        const originalText = button.dataset.originalText;
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const downloadId of selectedFiles) {
+            try {
+                const response = await fetch(`${API_BASE}/api/files/${downloadId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    successCount++;
+                } else {
+                    failCount++;
+                }
+            } catch (error) {
+                console.error(`Failed to delete ${downloadId}:`, error);
+                failCount++;
+            }
+        }
+
+        if (successCount > 0 && failCount === 0) {
+            showToast(`${successCount} file${successCount > 1 ? 's' : ''} deleted successfully`, 'success');
+        } else if (successCount > 0 && failCount > 0) {
+            showToast(`${successCount} file${successCount > 1 ? 's' : ''} deleted, ${failCount} failed`, 'info');
+        } else {
+            showToast('Failed to delete files', 'error');
+        }
+
+        selectedFiles.clear();
+        loadFiles();
+        loadDownloads();
+
+        // Reset button state
+        if (button) {
+            button.disabled = false;
+            resetDeleteButton(button);
+        }
     } else {
-        showToast('Failed to delete files', 'error');
+        // First click - show confirmation state
+        if (button) {
+            button.dataset.confirmDelete = 'true';
+            button.dataset.originalText = button.textContent;
+            button.textContent = `Confirm Delete ${count} file${count > 1 ? 's' : ''}?`;
+            button.classList.add('btn-confirm-delete');
+
+            // Reset after 3 seconds if not clicked again
+            setTimeout(() => resetDeleteButton(button), 3000);
+        }
     }
-
-    selectedFiles.clear();
-    loadFiles();
-
-    // Also reload downloads list to update the Downloads tab
-    loadDownloads();
 }
 
 async function downloadSelectedAsZip() {
     if (selectedFiles.size === 0) return;
 
-    const filenames = Array.from(selectedFiles);
+    const download_ids = Array.from(selectedFiles);
     const downloadBtn = document.getElementById('download-selected-btn');
     const originalBtnContent = downloadBtn.innerHTML;
 
@@ -1315,7 +1374,7 @@ async function downloadSelectedAsZip() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ filenames })
+            body: JSON.stringify({ download_ids })
         });
 
         if (sizeResponse.ok) {
@@ -1340,7 +1399,7 @@ async function downloadSelectedAsZip() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ filenames })
+            body: JSON.stringify({ download_ids })
         });
 
         if (!response.ok) throw new Error('Failed to create zip');

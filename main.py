@@ -35,6 +35,7 @@ import zipfile
 import io
 import unicodedata
 import time
+import uuid
 
 # Application modules
 from database import init_db, get_db_session, Download, DownloadStatus, get_db
@@ -735,13 +736,14 @@ class CleanupStats(BaseModel):
 
 class FileInfo(BaseModel):
     """Information about a downloaded file"""
-    filename: str
+    id: str                                  # Download ID for API operations
+    filename: str                            # Display filename (user-friendly name)
     size: int                               # File size in bytes
 
 
 class DownloadZipRequest(BaseModel):
     """Request body for downloading multiple files as ZIP"""
-    filenames: List[str]                    # List of filenames to include
+    download_ids: List[str]                 # List of download IDs to include
 
 
 # Database Service - Handles all database operations
@@ -796,7 +798,9 @@ class DatabaseService:
             db.commit()
 
     @staticmethod
-    def mark_completed(db: Session, download_id: str, filename: str, file_size: int, thumbnail: Optional[str] = None):
+    def mark_completed(db: Session, download_id: str, filename: str, file_size: int,
+                      thumbnail: Optional[str] = None, internal_filename: Optional[str] = None,
+                      internal_thumbnail: Optional[str] = None):
         download = DatabaseService.get_download_by_id(db, download_id)
         if download:
             download.status = DownloadStatus.COMPLETED
@@ -804,6 +808,8 @@ class DatabaseService:
             download.filename = filename
             download.file_size = file_size
             download.thumbnail = thumbnail
+            download.internal_filename = internal_filename
+            download.internal_thumbnail = internal_thumbnail
             download.completed_at = datetime.now(timezone.utc)
             db.commit()
 
@@ -830,15 +836,15 @@ class DatabaseService:
             return []
 
         with get_db() as db:
-            # Get both video filenames and thumbnail filenames from database
-            downloads = db.query(Download.filename, Download.thumbnail).all()
+            # Get internal filenames (UUIDs) from database - these are the actual files on disk
+            downloads = db.query(Download.internal_filename, Download.internal_thumbnail).all()
             db_filenames = set()
 
             for d in downloads:
-                if d.filename:
-                    db_filenames.add(d.filename)
-                if d.thumbnail:
-                    db_filenames.add(d.thumbnail)
+                if d.internal_filename:
+                    db_filenames.add(d.internal_filename)
+                if d.internal_thumbnail:
+                    db_filenames.add(d.internal_thumbnail)
 
         all_files = os.listdir("downloads")
         orphaned = [f for f in all_files if f not in db_filenames]
@@ -1015,68 +1021,74 @@ class YtdlpService:
                     file_size = os.path.getsize(filename)
                     original_basename = os.path.basename(filename)
 
-                    # Apply additional sanitization to the filename
+                    # Apply additional sanitization to the filename for display
                     sanitized_basename = sanitize_filename(original_basename)
 
-                    # If sanitization changed the filename, rename the file
-                    if sanitized_basename != original_basename:
-                        original_path = filename
-                        sanitized_path = os.path.join(os.path.dirname(filename), sanitized_basename)
+                    # Generate UUID-based internal filename for storage
+                    # This isolates file operations from user-generated names
+                    # Use same UUID for both video and thumbnail
+                    file_uuid = str(uuid.uuid4())
+                    file_ext = os.path.splitext(original_basename)[1]  # Keep original extension
+                    internal_basename = f"{file_uuid}{file_ext}"
+                    internal_path = os.path.join("downloads", internal_basename)
 
-                        # Ensure no filename collision
-                        counter = 1
-                        base_sanitized_path = sanitized_path
-                        while os.path.exists(sanitized_path):
-                            name, ext = os.path.splitext(base_sanitized_path)
-                            sanitized_path = f"{name}_{counter}{ext}"
-                            counter += 1
+                    # Rename the file to UUID-based name on disk
+                    try:
+                        os.rename(filename, internal_path)
+                        await emit_log("INFO", "Download", f"File stored as: {internal_basename} (display: {sanitized_basename})", download_id)
+                        filename = internal_path
+                    except Exception as e:
+                        await emit_log("WARNING", "Download", f"Could not rename to UUID: {str(e)}. Using original name.", download_id)
+                        sanitized_basename = original_basename
+                        internal_basename = original_basename
 
-                        try:
-                            os.rename(original_path, sanitized_path)
-                            filename = sanitized_path
-                            await emit_log("INFO", "Download", f"Renamed file from '{original_basename}' to '{os.path.basename(sanitized_path)}'", download_id)
-                        except Exception as e:
-                            await emit_log("WARNING", "Download", f"Could not rename file: {str(e)}. Using original name.", download_id)
-                            sanitized_basename = original_basename
-
-                    basename = os.path.basename(filename)
+                    basename = sanitized_basename  # Display name for user
+                    internal_filename_only = internal_basename  # UUID name on disk
 
                     # Look for thumbnail file with various possible extensions and patterns
-                    thumbnail_path = None
-                    base_without_ext = os.path.splitext(filename)[0]
+                    # Thumbnails are created based on the ORIGINAL downloaded filename (before UUID rename)
+                    thumbnail_display_name = None
+                    internal_thumbnail_only = None
+                    original_base_without_ext = os.path.splitext(os.path.join("downloads", original_basename))[0]
 
-                    # Try multiple thumbnail patterns
+                    # Try multiple thumbnail patterns based on original filename
                     possible_thumbs = [
-                        f"{base_without_ext}.jpg",
-                        f"{base_without_ext}.webp",
-                        f"{base_without_ext}.png",
+                        f"{original_base_without_ext}.jpg",
+                        f"{original_base_without_ext}.webp",
+                        f"{original_base_without_ext}.png",
                     ]
 
                     for possible_thumb in possible_thumbs:
                         if os.path.exists(possible_thumb):
-                            # Also sanitize and rename thumbnail if needed
+                            # Generate UUID-based thumbnail name using SAME UUID as video
+                            # This makes it easy to find matching thumbnails
+                            thumb_ext = os.path.splitext(possible_thumb)[1]
+                            internal_thumb_basename = f"{file_uuid}{thumb_ext}"
+                            internal_thumb_path = os.path.join("downloads", internal_thumb_basename)
+
+                            # Sanitize original thumbnail name for display
                             thumb_basename = os.path.basename(possible_thumb)
                             sanitized_thumb = sanitize_filename(thumb_basename)
 
-                            if sanitized_thumb != thumb_basename:
-                                try:
-                                    sanitized_thumb_path = os.path.join(os.path.dirname(possible_thumb), sanitized_thumb)
-                                    os.rename(possible_thumb, sanitized_thumb_path)
-                                    thumbnail_path = sanitized_thumb
-                                    await emit_log("INFO", "Download", f"Thumbnail renamed and found: {thumbnail_path}", download_id)
-                                except Exception as e:
-                                    thumbnail_path = thumb_basename
-                                    await emit_log("WARNING", "Download", f"Could not rename thumbnail: {str(e)}", download_id)
-                            else:
-                                thumbnail_path = thumb_basename
-                                await emit_log("INFO", "Download", f"Thumbnail found: {thumbnail_path}", download_id)
+                            try:
+                                # Rename thumbnail to UUID
+                                os.rename(possible_thumb, internal_thumb_path)
+                                thumbnail_display_name = sanitized_thumb
+                                internal_thumbnail_only = internal_thumb_basename
+                                await emit_log("INFO", "Download", f"Thumbnail stored as: {internal_thumb_basename} (display: {sanitized_thumb})", download_id)
+                            except Exception as e:
+                                await emit_log("WARNING", "Download", f"Could not rename thumbnail to UUID: {str(e)}", download_id)
+                                thumbnail_display_name = thumb_basename
+                                internal_thumbnail_only = thumb_basename
                             break
 
-                    if not thumbnail_path:
+                    if not thumbnail_display_name:
                         await emit_log("WARNING", "Download", "No thumbnail found for video", download_id)
 
                     with get_db() as db:
-                        DatabaseService.mark_completed(db, download_id, basename, file_size, thumbnail_path)
+                        DatabaseService.mark_completed(db, download_id, basename, file_size,
+                                                      thumbnail_display_name, internal_filename_only,
+                                                      internal_thumbnail_only)
 
                     await emit_log("SUCCESS", "Download", f"Download completed: {basename} ({file_size} bytes)", download_id)
 
@@ -1260,29 +1272,30 @@ async def delete_download(download_id: str, db: Session = Depends(get_db_session
 
     await emit_log("INFO", "API", f"Deleting download: {download_id}", download_id)
 
-    # Delete file if it exists
-    if download.filename:
-        filepath = os.path.join("downloads", download.filename)
+    display_name = download.filename or "unknown"
+
+    # Delete video file if it exists (using internal_filename)
+    if download.internal_filename:
+        filepath = os.path.join("downloads", download.internal_filename)
         if os.path.exists(filepath):
             try:
                 os.remove(filepath)
-                await emit_log("INFO", "API", f"Deleted file: {download.filename}", download_id)
+                await emit_log("INFO", "API", f"Deleted file: {display_name} (internal: {download.internal_filename})", download_id)
             except Exception as e:
-                await emit_log("ERROR", "API", f"Failed to delete file {download.filename}: {str(e)}", download_id)
+                await emit_log("ERROR", "API", f"Failed to delete file {display_name}: {str(e)}", download_id)
 
-        # Also delete associated thumbnail if it exists
-        base_without_ext = os.path.splitext(filepath)[0]
-        for thumb_ext in ['.jpg', '.jpeg', '.png', '.webp']:
-            thumb_path = f"{base_without_ext}{thumb_ext}"
-            if os.path.exists(thumb_path):
-                try:
-                    os.remove(thumb_path)
-                    await emit_log("INFO", "API", f"Deleted associated thumbnail: {os.path.basename(thumb_path)}", download_id)
-                except Exception as e:
-                    await emit_log("WARNING", "API", f"Failed to delete thumbnail: {str(e)}", download_id)
+    # Delete thumbnail if it exists (using internal_thumbnail)
+    if download.internal_thumbnail:
+        thumb_path = os.path.join("downloads", download.internal_thumbnail)
+        if os.path.exists(thumb_path):
+            try:
+                os.remove(thumb_path)
+                await emit_log("INFO", "API", f"Deleted thumbnail: {download.internal_thumbnail}", download_id)
+            except Exception as e:
+                await emit_log("WARNING", "API", f"Failed to delete thumbnail: {str(e)}", download_id)
 
     DatabaseService.delete_download(db, download_id)
-    await emit_log("SUCCESS", "API", f"Download deleted successfully: {download_id}", download_id)
+    await emit_log("SUCCESS", "API", f"Download deleted successfully: {display_name}", download_id)
     return {"message": "Download deleted successfully"}
 
 
@@ -1300,29 +1313,31 @@ async def cleanup_downloads(days: int = 7, db: Session = Depends(get_db_session)
     await emit_log("INFO", "Cleanup", f"Found {len(failed_downloads)} failed downloads to clean up")
 
     for download in failed_downloads:
-        if download.filename:
-            filepath = os.path.join("downloads", download.filename)
+        display_name = download.filename or "unknown"
+
+        # Delete video file using internal_filename
+        if download.internal_filename:
+            filepath = os.path.join("downloads", download.internal_filename)
             if os.path.exists(filepath):
                 try:
                     size = os.path.getsize(filepath)
                     os.remove(filepath)
                     space_freed += size
-                    await emit_log("INFO", "Cleanup", f"Removed file: {download.filename} ({size} bytes)", download.id)
+                    await emit_log("INFO", "Cleanup", f"Removed file: {display_name} ({size} bytes)", download.id)
                 except Exception as e:
-                    await emit_log("ERROR", "Cleanup", f"Failed to remove file {download.filename}: {str(e)}", download.id)
+                    await emit_log("ERROR", "Cleanup", f"Failed to remove file {display_name}: {str(e)}", download.id)
 
-            # Also delete associated thumbnail if it exists
-            base_without_ext = os.path.splitext(filepath)[0]
-            for thumb_ext in ['.jpg', '.jpeg', '.png', '.webp']:
-                thumb_path = f"{base_without_ext}{thumb_ext}"
-                if os.path.exists(thumb_path):
-                    try:
-                        thumb_size = os.path.getsize(thumb_path)
-                        os.remove(thumb_path)
-                        space_freed += thumb_size
-                        await emit_log("INFO", "Cleanup", f"Removed thumbnail: {os.path.basename(thumb_path)} ({thumb_size} bytes)", download.id)
-                    except Exception as e:
-                        await emit_log("WARNING", "Cleanup", f"Failed to remove thumbnail: {str(e)}", download.id)
+        # Delete thumbnail using internal_thumbnail
+        if download.internal_thumbnail:
+            thumb_path = os.path.join("downloads", download.internal_thumbnail)
+            if os.path.exists(thumb_path):
+                try:
+                    thumb_size = os.path.getsize(thumb_path)
+                    os.remove(thumb_path)
+                    space_freed += thumb_size
+                    await emit_log("INFO", "Cleanup", f"Removed thumbnail: {download.internal_thumbnail} ({thumb_size} bytes)", download.id)
+                except Exception as e:
+                    await emit_log("WARNING", "Cleanup", f"Failed to remove thumbnail: {str(e)}", download.id)
 
         DatabaseService.delete_download(db, download.id)
         downloads_removed += 1
@@ -1622,25 +1637,24 @@ async def clear_ytdlp_cache():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/files/thumbnail/{filename}")
-async def get_thumbnail(filename: str):
-    """Serve thumbnail images"""
-    # Security: Validate filename and prevent path traversal
-    if not validate_filename(filename):
-        await emit_log("WARNING", "API", f"Invalid filename rejected: {filename}")
-        raise HTTPException(status_code=400, detail="Invalid filename")
+@app.get("/api/files/thumbnail/{download_id}")
+async def get_thumbnail(download_id: str, db: Session = Depends(get_db_session)):
+    """Serve thumbnail images using download ID"""
+    # Look up the download record to get internal_thumbnail filename
+    download = DatabaseService.get_download_by_id(db, download_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
 
-    # Security: Ensure file is within downloads directory
-    if not is_safe_path("downloads", filename):
-        await emit_log("WARNING", "API", f"Path traversal attempt blocked: {filename}")
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    filepath = os.path.join("downloads", filename)
-    if not os.path.exists(filepath):
+    if not download.internal_thumbnail:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
 
+    # Use internal_thumbnail (UUID-based) for file access
+    filepath = os.path.join("downloads", download.internal_thumbnail)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Thumbnail file not found")
+
     # Security: Verify file extension
-    ext = os.path.splitext(filename)[1].lower()
+    ext = os.path.splitext(download.internal_thumbnail)[1].lower()
     allowed_extensions = {'.jpg', '.jpeg', '.png', '.webp'}
     if ext not in allowed_extensions:
         await emit_log("WARNING", "API", f"Disallowed file extension: {ext}")
@@ -1658,25 +1672,24 @@ async def get_thumbnail(filename: str):
     return FileResponse(filepath, media_type=media_type)
 
 
-@app.get("/api/files/video/{filename}")
-async def get_video(filename: str):
-    """Serve video files for streaming/playing in browser"""
-    # Security: Validate filename and prevent path traversal
-    if not validate_filename(filename):
-        await emit_log("WARNING", "API", f"Invalid filename rejected: {filename}")
-        raise HTTPException(status_code=400, detail="Invalid filename")
+@app.get("/api/files/video/{download_id}")
+async def get_video(download_id: str, db: Session = Depends(get_db_session)):
+    """Serve video files for streaming/playing in browser using download ID"""
+    # Look up the download record to get internal_filename
+    download = DatabaseService.get_download_by_id(db, download_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
 
-    # Security: Ensure file is within downloads directory
-    if not is_safe_path("downloads", filename):
-        await emit_log("WARNING", "API", f"Path traversal attempt blocked: {filename}")
-        raise HTTPException(status_code=403, detail="Access denied")
+    if not download.internal_filename:
+        raise HTTPException(status_code=404, detail="Video file not found")
 
-    filepath = os.path.join("downloads", filename)
+    # Use internal_filename (UUID-based) for file access
+    filepath = os.path.join("downloads", download.internal_filename)
     if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="Video not found")
+        raise HTTPException(status_code=404, detail="Video file not found on disk")
 
     # Security: Verify file extension
-    ext = os.path.splitext(filename)[1].lower()
+    ext = os.path.splitext(download.internal_filename)[1].lower()
     allowed_extensions = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v'}
     if ext not in allowed_extensions:
         await emit_log("WARNING", "API", f"Disallowed file extension: {ext}")
@@ -1695,50 +1708,47 @@ async def get_video(filename: str):
     return FileResponse(filepath, media_type=media_type)
 
 
-@app.get("/api/files/download/{filename}")
-async def download_file(filename: str):
-    """Download video file"""
-    # Security: Validate filename and prevent path traversal
-    if not validate_filename(filename):
-        await emit_log("WARNING", "API", f"Invalid filename rejected: {filename}")
-        raise HTTPException(status_code=400, detail="Invalid filename")
+@app.get("/api/files/download/{download_id}")
+async def download_file(download_id: str, db: Session = Depends(get_db_session)):
+    """Download video file using download ID"""
+    # Look up the download record to get internal_filename and display filename
+    download = DatabaseService.get_download_by_id(db, download_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
 
-    # Security: Ensure file is within downloads directory
-    if not is_safe_path("downloads", filename):
-        await emit_log("WARNING", "API", f"Path traversal attempt blocked: {filename}")
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    filepath = os.path.join("downloads", filename)
-    if not os.path.exists(filepath):
+    if not download.internal_filename:
         raise HTTPException(status_code=404, detail="File not found")
 
+    # Use internal_filename (UUID-based) for file access
+    filepath = os.path.join("downloads", download.internal_filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
     from fastapi.responses import FileResponse
-    return FileResponse(filepath, filename=filename, media_type='application/octet-stream')
+    # Use display filename (filename field) for the downloaded file name
+    return FileResponse(filepath, filename=download.filename, media_type='application/octet-stream')
 
 
 @app.get("/api/files", response_model=List[FileInfo])
-async def list_files():
-    """List all downloaded files with their sizes"""
+async def list_files(db: Session = Depends(get_db_session)):
+    """List all completed downloads with their display filenames and sizes"""
     try:
-        if not os.path.exists("downloads"):
-            await emit_log("INFO", "API", "Downloads directory does not exist")
-            return []
+        # Get all completed downloads from database
+        completed_downloads = DatabaseService.get_downloads_by_status(db, DownloadStatus.COMPLETED)
 
         files = []
-        for filename in os.listdir("downloads"):
-            filepath = os.path.join("downloads", filename)
-            if os.path.isfile(filepath):
-                # Only include video files, not thumbnails
-                ext = os.path.splitext(filename)[1].lower()
-                video_extensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v']
-                if ext in video_extensions:
-                    size = os.path.getsize(filepath)
-                    files.append(FileInfo(filename=filename, size=size))
+        for download in completed_downloads:
+            if download.filename and download.file_size and download.internal_filename:
+                files.append(FileInfo(
+                    id=download.id,
+                    filename=download.filename,  # Display name
+                    size=download.file_size
+                ))
 
-        # Sort by filename
-        files.sort(key=lambda x: x.filename)
+        # Sort by filename alphabetically
+        files.sort(key=lambda x: x.filename.lower())
 
-        await emit_log("INFO", "API", f"File list requested, found {len(files)} video files")
+        await emit_log("INFO", "API", f"File list requested, found {len(files)} completed downloads")
         return files
 
     except Exception as e:
@@ -1746,54 +1756,43 @@ async def list_files():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.delete("/api/files/{filename}")
-async def delete_file(filename: str, db: Session = Depends(get_db_session)):
-    """Delete a specific file from downloads directory and remove database entries"""
+@app.delete("/api/files/{download_id}")
+async def delete_file(download_id: str, db: Session = Depends(get_db_session)):
+    """Delete a specific file from downloads directory and remove database entry using download ID"""
     try:
-        # Security: Validate filename and prevent path traversal
-        if not validate_filename(filename):
-            await emit_log("WARNING", "API", f"Invalid filename rejected for deletion: {filename}")
-            raise HTTPException(status_code=400, detail="Invalid filename")
+        # Look up the download record
+        download = DatabaseService.get_download_by_id(db, download_id)
+        if not download:
+            raise HTTPException(status_code=404, detail="Download not found")
 
-        # Security: Ensure file is within downloads directory
-        if not is_safe_path("downloads", filename):
-            await emit_log("WARNING", "API", f"Path traversal attempt blocked on delete: {filename}")
-            raise HTTPException(status_code=403, detail="Access denied")
+        display_name = download.filename or "unknown"
+        file_size = 0
 
-        filepath = os.path.join("downloads", filename)
+        # Delete video file if it exists
+        if download.internal_filename:
+            filepath = os.path.join("downloads", download.internal_filename)
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                os.remove(filepath)
+                await emit_log("SUCCESS", "API", f"File deleted: {display_name} ({file_size} bytes)")
+            else:
+                await emit_log("WARNING", "API", f"File not found on disk: {download.internal_filename}")
 
-        if not os.path.exists(filepath):
-            await emit_log("WARNING", "API", f"Attempted to delete non-existent file: {filename}")
-            raise HTTPException(status_code=404, detail="File not found")
-
-        # Get file size before deletion for logging
-        file_size = os.path.getsize(filepath)
-
-        # Delete the file
-        os.remove(filepath)
-        await emit_log("SUCCESS", "API", f"File deleted: {filename} ({file_size} bytes)")
-
-        # Also delete associated thumbnail if it exists
-        base_without_ext = os.path.splitext(filepath)[0]
-        for thumb_ext in ['.jpg', '.jpeg', '.png', '.webp']:
-            thumb_path = f"{base_without_ext}{thumb_ext}"
+        # Delete thumbnail if it exists
+        if download.internal_thumbnail:
+            thumb_path = os.path.join("downloads", download.internal_thumbnail)
             if os.path.exists(thumb_path):
                 try:
                     os.remove(thumb_path)
-                    await emit_log("INFO", "API", f"Deleted associated thumbnail: {os.path.basename(thumb_path)}")
+                    await emit_log("INFO", "API", f"Deleted associated thumbnail: {download.internal_thumbnail}")
                 except Exception as e:
                     await emit_log("WARNING", "API", f"Failed to delete thumbnail: {str(e)}")
 
-        # Delete associated database entries
-        downloads_with_file = db.query(Download).filter(Download.filename == filename).all()
-        for download in downloads_with_file:
-            await emit_log("INFO", "API", f"Deleting database entry for download: {download.id}")
-            DatabaseService.delete_download(db, download.id)
+        # Delete database entry
+        DatabaseService.delete_download(db, download_id)
+        await emit_log("SUCCESS", "API", f"Deleted database entry for download: {download_id}")
 
-        if downloads_with_file:
-            await emit_log("SUCCESS", "API", f"Deleted {len(downloads_with_file)} database entry(ies) for file: {filename}")
-
-        return {"message": "File deleted successfully", "filename": filename, "size": file_size}
+        return {"message": "File deleted successfully", "filename": display_name, "size": file_size}
 
     except HTTPException:
         raise
@@ -1803,24 +1802,22 @@ async def delete_file(filename: str, db: Session = Depends(get_db_session)):
 
 
 @app.post("/api/files/calculate-zip-size")
-async def calculate_zip_size(request: DownloadZipRequest):
-    """Calculate total size of selected files and estimate ZIP size"""
+async def calculate_zip_size(request: DownloadZipRequest, db: Session = Depends(get_db_session)):
+    """Calculate total size of selected files and estimate ZIP size using download IDs"""
     try:
-        if not request.filenames:
+        if not request.download_ids:
             raise HTTPException(status_code=400, detail="No files specified")
 
         total_size = 0
         valid_files = 0
 
-        for filename in request.filenames:
-            filepath = os.path.join("downloads", filename)
-
-            # Security check
-            real_path = os.path.realpath(filepath)
-            downloads_dir = os.path.realpath("downloads")
-            if not real_path.startswith(downloads_dir):
+        for download_id in request.download_ids:
+            # Look up download record
+            download = DatabaseService.get_download_by_id(db, download_id)
+            if not download or not download.internal_filename:
                 continue
 
+            filepath = os.path.join("downloads", download.internal_filename)
             if os.path.exists(filepath):
                 total_size += os.path.getsize(filepath)
                 valid_files += 1
@@ -1842,13 +1839,23 @@ async def calculate_zip_size(request: DownloadZipRequest):
 
 
 @app.post("/api/files/download-zip")
-async def download_files_as_zip(request: DownloadZipRequest):
-    """Create and stream a ZIP file containing selected files"""
+async def download_files_as_zip(request: DownloadZipRequest, db: Session = Depends(get_db_session)):
+    """Create and stream a ZIP file containing selected files using download IDs"""
     try:
-        if not request.filenames:
+        if not request.download_ids:
             raise HTTPException(status_code=400, detail="No files specified")
 
-        await emit_log("INFO", "API", f"Creating streaming ZIP with {len(request.filenames)} file(s)")
+        await emit_log("INFO", "API", f"Creating streaming ZIP with {len(request.download_ids)} file(s)")
+
+        # Preload download records to avoid database access in generator
+        downloads_map = {}
+        for download_id in request.download_ids:
+            download = DatabaseService.get_download_by_id(db, download_id)
+            if download and download.internal_filename and download.filename:
+                downloads_map[download_id] = {
+                    'internal_filename': download.internal_filename,
+                    'display_filename': download.filename
+                }
 
         # Generator function to stream ZIP file
         def generate_zip():
@@ -1859,14 +1866,10 @@ async def download_files_as_zip(request: DownloadZipRequest):
             zip_buffer = io.BytesIO()
 
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                for filename in request.filenames:
-                    filepath = os.path.join("downloads", filename)
-
-                    # Security check: ensure the file is in the downloads directory
-                    real_path = os.path.realpath(filepath)
-                    downloads_dir = os.path.realpath("downloads")
-                    if not real_path.startswith(downloads_dir):
-                        continue
+                for download_id, file_info in downloads_map.items():
+                    internal_filename = file_info['internal_filename']
+                    display_filename = file_info['display_filename']
+                    filepath = os.path.join("downloads", internal_filename)
 
                     if not os.path.exists(filepath):
                         continue
@@ -1875,8 +1878,8 @@ async def download_files_as_zip(request: DownloadZipRequest):
                     original_size = os.path.getsize(filepath)
                     total_original_size += original_size
 
-                    # Add file to ZIP
-                    zip_file.write(filepath, filename)
+                    # Add file to ZIP using display filename (user-friendly name)
+                    zip_file.write(filepath, display_filename)
 
             # Get the final ZIP size
             zip_buffer.seek(0)

@@ -49,11 +49,18 @@ class Download(Base):
     # Download progress as percentage (0.0 to 100.0)
     progress = Column(Float, default=0.0)
 
-    # Name of the downloaded video file (set after download completes)
+    # User-facing filename for display purposes (original/sanitized name from video)
     filename = Column(String, nullable=True)
 
-    # Name of the thumbnail image file (extracted from video metadata)
+    # Internal UUID-based filename stored on disk (e.g., "550e8400-e29b-41d4-a716-446655440000.mp4")
+    # This isolates file operations from user-generated names, eliminating sanitization concerns
+    internal_filename = Column(String, nullable=True)
+
+    # User-facing thumbnail filename for display
     thumbnail = Column(String, nullable=True)
+
+    # Internal UUID-based thumbnail filename stored on disk
+    internal_thumbnail = Column(String, nullable=True)
 
     # Size of the downloaded file in bytes
     file_size = Column(Integer, nullable=True)

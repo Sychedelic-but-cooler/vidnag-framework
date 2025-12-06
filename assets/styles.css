@@ -1995,3 +1995,37 @@ body[data-theme="light"] .url-domain:hover {
         max-width: 150px;
     }
 }
+
+/* ============================================
+   TWO-STEP DELETE BUTTON CONFIRMATION
+   ============================================ */
+
+.btn-confirm-delete {
+    background: var(--warning) !important;
+    color: var(--bg-dark) !important;
+    font-weight: 600;
+    animation: pulse-warning 0.5s ease-in-out;
+    position: relative;
+}
+
+.btn-confirm-delete::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    background: var(--warning);
+    border-radius: inherit;
+    opacity: 0.5;
+    filter: blur(4px);
+    z-index: -1;
+    animation: glow-pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse-warning {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+@keyframes glow-pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.6; }
+}

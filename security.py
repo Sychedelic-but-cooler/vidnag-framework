@@ -55,8 +55,10 @@ def validate_filename(filename: str) -> bool:
         return False
 
     # Reject parent directory references (prevents path traversal)
-    # Even without slashes, ".." could be dangerous in some contexts
-    if '..' in filename:
+    # We already reject slashes above, so ".." alone would be the parent directory reference
+    # However, we need to allow "..." (ellipsis) in filenames like "video...part1.mp4"
+    # Only reject if the filename IS exactly ".." (not "...", "..abc", "abc..", etc.)
+    if filename == '..':
         return False
 
     # Reject absolute paths (prevents accessing specific system locations)
