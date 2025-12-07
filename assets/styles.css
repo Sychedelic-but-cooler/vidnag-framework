@@ -708,6 +708,66 @@ label {
     font-style: italic;
 }
 
+/* Upload Drop Zone Styles */
+.upload-drop-zone {
+    border: 2px dashed var(--glass-border);
+    border-radius: 12px;
+    padding: 3rem 2rem;
+    text-align: center;
+    transition: all 0.3s ease;
+    background: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+}
+
+.upload-drop-zone:hover {
+    border-color: var(--primary-color);
+    background: rgba(var(--primary-color-rgb), 0.05);
+}
+
+.upload-drop-zone.drag-over {
+    border-color: var(--primary-color);
+    background: rgba(var(--primary-color-rgb), 0.15);
+    transform: scale(1.02);
+    box-shadow: 0 8px 24px rgba(var(--primary-color-rgb), 0.3);
+}
+
+.upload-drop-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.upload-icon {
+    font-size: 3rem;
+    opacity: 0.7;
+}
+
+.upload-text {
+    font-size: 1.1rem;
+    color: var(--text-light);
+    margin: 0;
+}
+
+.upload-or {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin: 0.5rem 0;
+}
+
+.selected-file-name {
+    font-size: 0.9rem;
+    color: var(--primary-color);
+    margin-top: 0.5rem;
+    font-weight: 500;
+}
+
+.upload-tip {
+    background: rgba(var(--primary-color-rgb), 0.1);
+    border-left: 4px solid var(--primary-color);
+    padding: 1rem 1.5rem;
+}
+
 input[type="text"],
 input[type="number"],
 select,
@@ -2028,4 +2088,234 @@ body[data-theme="light"] .url-domain:hover {
 @keyframes glow-pulse {
     0%, 100% { opacity: 0.3; }
     50% { opacity: 0.6; }
+}
+
+/* ========================================
+   TOOLS TAB STYLES
+   ======================================== */
+
+/* Tool Selector */
+.tools-selector {
+    margin-bottom: 2rem;
+}
+
+.tool-buttons {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.tool-btn {
+    padding: 1rem 2rem;
+    border: 2px solid var(--glass-border);
+    background: var(--glass-bg);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 1rem;
+    color: var(--text-light);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.tool-btn:hover {
+    border-color: var(--primary-color);
+    transform: translateY(-2px);
+}
+
+.tool-btn.active {
+    border-color: var(--primary-color);
+    background: rgba(139, 92, 246, 0.1);
+}
+
+/* Tool Content Containers */
+.tool-content {
+    display: none;
+}
+
+.tool-content.active {
+    display: block;
+}
+
+/* Source Info Box */
+.source-info {
+    background: rgba(139, 92, 246, 0.1);
+    border: 1px solid var(--primary-color);
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+/* Warning Box */
+.warning-box {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid #ef4444;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    color: #fca5a5;
+}
+
+.tool-form {
+    margin-bottom: 2rem;
+}
+
+/* Conversions List */
+.conversions-list,
+.audio-files-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.conversion-item,
+.audio-file-item {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 1.5rem;
+}
+
+.conversion-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.conversion-status {
+    background: rgba(139, 92, 246, 0.2);
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.875rem;
+    text-transform: capitalize;
+}
+
+.progress-bar {
+    background: var(--glass-bg-darker);
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.progress-fill {
+    background: linear-gradient(90deg, var(--primary-color), var(--secondary-light));
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+/* Audio File Items */
+.audio-file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.file-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.file-size {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.file-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Transform History */
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.history-item {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.timestamp {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 2rem;
+    font-style: italic;
+}
+
+/* Highlight Animation for Preselected Video */
+@keyframes highlight {
+    0%, 100% { background: rgba(139, 92, 246, 0.1); }
+    50% { background: rgba(139, 92, 246, 0.3); }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .tool-buttons {
+        flex-direction: column;
+    }
+
+    .tool-btn {
+        width: 100%;
+    }
+
+    .audio-file-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+
+    .file-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+
+/* Tools Status Indicator */
+.tools-status-indicator {
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid var(--primary-color);
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 2rem;
+    animation: fadeIn 0.3s ease;
+}
+
+.tools-status-indicator .status-content {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: 1rem;
+    color: var(--text-light);
+}
+
+.tools-status-indicator.success {
+    background: rgba(34, 197, 94, 0.15);
+    border-color: #22c55e;
+}
+
+.tools-status-indicator.error {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: #ef4444;
 }

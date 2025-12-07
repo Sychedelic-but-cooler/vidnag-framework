@@ -30,6 +30,14 @@ class DownloadStatus(str, enum.Enum):
     FAILED = "failed"           # Failed with error
 
 
+class ConversionStatus(str, enum.Enum):
+    """Possible states for a tool conversion job"""
+    QUEUED = "queued"           # Waiting in queue to start
+    CONVERTING = "converting"   # Currently converting
+    COMPLETED = "completed"     # Successfully finished
+    FAILED = "failed"           # Failed with error
+
+
 class Download(Base):
     """
     Database model for tracking video downloads.
@@ -75,6 +83,50 @@ class Download(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     # Timestamp when download completed (null until finished)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class ToolConversion(Base):
+    """
+    Database model for tracking tool conversion jobs (e.g., video to MP3).
+    Links to source video and tracks conversion progress.
+    """
+    __tablename__ = "tool_conversions"
+
+    # Unique identifier generated automatically using UUID4
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Link to source video (foreign key to downloads.id)
+    source_download_id = Column(String, nullable=False)
+
+    # Type of tool/conversion (e.g., "video_to_mp3")
+    tool_type = Column(String, nullable=False)
+
+    # Current status of the conversion (queued, converting, completed, failed)
+    status = Column(Enum(ConversionStatus), default=ConversionStatus.QUEUED, nullable=False)
+
+    # Conversion progress as percentage (0.0 to 100.0)
+    progress = Column(Float, default=0.0)
+
+    # User-facing output filename for display purposes
+    output_filename = Column(String, nullable=True)
+
+    # Internal UUID-based output filename stored on disk
+    internal_output_filename = Column(String, nullable=True)
+
+    # Size of the output file in bytes
+    output_size = Column(Integer, nullable=True)
+
+    # Audio quality setting for MP3 conversions (bitrate in kbps: 96, 128, 192, etc.)
+    audio_quality = Column(Integer, nullable=True)
+
+    # Error message if conversion failed (null for successful conversions)
+    error_message = Column(String, nullable=True)
+
+    # Timestamp when conversion was created (always in UTC timezone)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Timestamp when conversion completed (null until finished)
     completed_at = Column(DateTime, nullable=True)
 
 

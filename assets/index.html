@@ -22,6 +22,7 @@
         <div class="tabs">
             <button class="tab-button active" data-tab="downloads">Downloads</button>
             <button class="tab-button" data-tab="files">Browse Files</button>
+            <button class="tab-button" data-tab="tools">Tools</button>
             <button class="tab-button" data-tab="settings">Settings</button>
             <button class="tab-button" data-tab="logs">Logs</button>
         </div>
@@ -71,6 +72,34 @@
 
         <!-- Browse Files Tab -->
         <div id="files-tab" class="tab-content">
+            <!-- Video Upload Section -->
+            <section class="video-upload glass-card">
+                <h2>Upload Video</h2>
+                <p style="color: var(--text-muted); margin-bottom: 1rem; font-size: 0.9rem;">
+                    Upload a video file to use with the conversion and transformation tools.
+                </p>
+                <form id="video-upload-form">
+                    <div class="form-group">
+                        <div id="upload-drop-zone" class="upload-drop-zone">
+                            <div class="upload-drop-content">
+                                <span class="upload-icon">📁</span>
+                                <p class="upload-text">Drag and drop a video file here</p>
+                                <p class="upload-or">or</p>
+                                <label for="video-file-input" class="btn btn-secondary">
+                                    Choose File
+                                </label>
+                                <input type="file" id="video-file-input" accept=".mp4,.mkv,.webm,.avi,.mov" style="display: none;" required>
+                                <p class="form-help" style="margin-top: 1rem;">Supported formats: MP4, MKV, WebM, AVI, MOV (max 2GB)</p>
+                                <p id="selected-file-name" class="selected-file-name" style="display: none;"></p>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" id="upload-video-btn">
+                        <span>⬆️</span> Upload Video
+                    </button>
+                </form>
+            </section>
+
             <section class="file-browser glass-card">
                 <div class="file-browser-header">
                     <h2>Downloaded Files</h2>
@@ -249,6 +278,7 @@
                             <option value="">All Components</option>
                             <option value="System">System</option>
                             <option value="API">API</option>
+                            <option value="Upload">Upload</option>
                             <option value="Download">Download</option>
                             <option value="YT-DLP">YT-DLP</option>
                             <option value="YT-DLP-ERR">YT-DLP-ERR</option>
@@ -271,6 +301,120 @@
                     <p class="empty-state">Initializing log system...</p>
                 </div>
             </section>
+        </div>
+
+        <!-- Tools Tab -->
+        <div id="tools-tab" class="tab-content">
+            <!-- Status Indicator -->
+            <div id="tools-status-indicator" class="tools-status-indicator" style="display: none;">
+                <div class="status-content">
+                    <span id="tools-status-message">Processing...</span>
+                </div>
+            </div>
+
+            <!-- Upload Tip -->
+            <section class="upload-tip glass-card">
+                <p style="color: var(--text-muted); font-size: 0.95rem; margin: 0;">
+                    💡 <strong>Tip:</strong> Need to modify your own video? Upload it from the <strong>Browse Files</strong> tab to process it here.
+                </p>
+            </section>
+
+            <!-- Tool Selector -->
+            <section class="tools-selector glass-card">
+                <h2>Available Tools</h2>
+                <div class="tool-buttons">
+                    <button class="tool-btn active" data-tool="video-to-mp3">
+                        Video to MP3
+                    </button>
+                    <button class="tool-btn" data-tool="video-transform">
+                        Transform Video
+                    </button>
+                </div>
+            </section>
+
+            <!-- Video to MP3 Tool -->
+            <div id="video-to-mp3-tool" class="tool-content active">
+                <section class="tool-form glass-card">
+                    <h2>Convert Video to MP3</h2>
+                    <div id="mp3-source-info" class="source-info" style="display: none;">
+                        <strong>Selected video:</strong> <span id="mp3-selected-video-name"></span>
+                    </div>
+                    <div class="form-group">
+                        <label>Select Source Video:</label>
+                        <select id="mp3-source-video-select">
+                            <option value="">-- Select a video --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Audio Quality:</label>
+                        <select id="audio-quality-select">
+                            <option value="192">High (192 kbps)</option>
+                            <option value="128" selected>Medium (128 kbps)</option>
+                            <option value="96">Low (96 kbps)</option>
+                        </select>
+                    </div>
+                    <button id="start-mp3-conversion-btn" class="btn btn-primary" disabled>
+                        Convert to MP3
+                    </button>
+                </section>
+
+                <section class="active-conversions">
+                    <h2>Active Operations</h2>
+                    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+                        MP3 conversions and video transformations in progress
+                    </p>
+                    <div id="active-conversions-list" class="conversions-list">
+                        <p class="empty-state">No active operations</p>
+                    </div>
+                </section>
+
+                <section class="completed-audio-files">
+                    <h2>Converted Audio Files</h2>
+                    <div id="audio-files-list" class="audio-files-list">
+                        <p class="empty-state">No audio files yet</p>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Video Transform Tool -->
+            <div id="video-transform-tool" class="tool-content">
+                <section class="tool-form glass-card">
+                    <h2>Transform Video</h2>
+                    <div class="warning-box">
+                        <strong>Warning:</strong> Transformations modify the original video file.
+                        This action cannot be undone.
+                    </div>
+                    <div id="transform-source-info" class="source-info" style="display: none;">
+                        <strong>Selected video:</strong> <span id="transform-selected-video-name"></span>
+                    </div>
+                    <div class="form-group">
+                        <label>Select Source Video:</label>
+                        <select id="transform-source-video-select">
+                            <option value="">-- Select a video --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Transformation:</label>
+                        <select id="transform-type-select">
+                            <option value="hflip">Flip Horizontally (Mirror)</option>
+                            <option value="vflip">Flip Vertically</option>
+                            <option value="rotate90">Rotate 90° Clockwise</option>
+                            <option value="rotate180">Rotate 180°</option>
+                            <option value="rotate270">Rotate 270° Clockwise (90° Counter-clockwise)</option>
+                        </select>
+                    </div>
+                    <button id="apply-transform-btn" class="btn btn-warning" disabled>
+                        Apply Transformation
+                    </button>
+                </section>
+
+                <section class="transform-history">
+                    <h2>Recent Transformations</h2>
+                    <div id="transform-history-list" class="history-list">
+                        <p class="empty-state">No transformations yet</p>
+                    </div>
+                </section>
+            </div>
         </div>
     </div>
 

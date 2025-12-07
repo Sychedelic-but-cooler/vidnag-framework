@@ -129,6 +129,10 @@ function initTabs() {
                 loadFiles();
             }
 
+            if (targetTab === 'tools') {
+                loadToolsTab();
+            }
+
             // Refresh logs display to apply any active filters
             if (targetTab === 'logs') {
                 filterLogs();
@@ -230,6 +234,173 @@ async function submitDownload(event) {
     } catch (error) {
         showToast('Failed to start downloads: ' + error.message, 'error');
     }
+}
+
+/**
+ * Video Upload Handler
+ *
+ * Handles uploading video files directly to the server.
+ * Uploaded videos appear in the file list and can be used with tools.
+ */
+async function submitVideoUpload(event) {
+    event.preventDefault();
+
+    const fileInput = document.getElementById('video-file-input');
+    const uploadBtn = document.getElementById('upload-video-btn');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        showToast('Please select a video file', 'error');
+        return;
+    }
+
+    const file = fileInput.files[0];
+    await uploadFile(file, fileInput, uploadBtn);
+}
+
+/**
+ * Perform the actual file upload
+ */
+async function uploadFile(file, fileInput, uploadBtn) {
+    // Validate file extension
+    const allowedExtensions = ['.mp4', '.mkv', '.webm', '.avi', '.mov'];
+    const fileExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+
+    if (!allowedExtensions.includes(fileExt)) {
+        showToast('Invalid file type. Allowed: MP4, MKV, WebM, AVI, MOV', 'error');
+        return;
+    }
+
+    // Validate file size (matches backend limit)
+    const maxSizeMB = 2048; // 2GB limit
+    const maxSizeBytes = maxSizeMB * 1024 * 1024;
+
+    if (file.size > maxSizeBytes) {
+        showToast(`File too large. Maximum size is ${maxSizeMB / 1024} GB`, 'error');
+        return;
+    }
+
+    // Create FormData for file upload
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        // Disable upload button during upload
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<span>⏳</span> Uploading...';
+
+        const response = await fetch(`${API_BASE}/api/upload`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Upload failed');
+        }
+
+        const result = await response.json();
+
+        showToast(`Video uploaded successfully: ${result.filename}`, 'success');
+
+        // Clear the file input and selected file name display
+        fileInput.value = '';
+        const selectedFileName = document.getElementById('selected-file-name');
+        if (selectedFileName) {
+            selectedFileName.style.display = 'none';
+            selectedFileName.textContent = '';
+        }
+
+        // Reload the video selects to show the new upload
+        await loadSourceVideosForTools();
+
+        // Also reload files list if on Files tab
+        await loadFiles();
+
+    } catch (error) {
+        console.error('Upload failed:', error);
+        showToast(`Upload failed: ${error.message}`, 'error');
+    } finally {
+        // Re-enable upload button
+        uploadBtn.disabled = false;
+        uploadBtn.innerHTML = '<span>⬆️</span> Upload Video';
+    }
+}
+
+/**
+ * Initialize drag and drop for video upload
+ */
+function initDragAndDrop() {
+    const dropZone = document.getElementById('upload-drop-zone');
+    const fileInput = document.getElementById('video-file-input');
+    const selectedFileName = document.getElementById('selected-file-name');
+
+    if (!dropZone || !fileInput) {
+        return;
+    }
+
+    // Prevent default drag behaviors on the drop zone only
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    // Highlight drop zone when item is dragged over it
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, highlight, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, unhighlight, false);
+    });
+
+    function highlight() {
+        dropZone.classList.add('drag-over');
+    }
+
+    function unhighlight() {
+        dropZone.classList.remove('drag-over');
+    }
+
+    // Handle dropped files
+    dropZone.addEventListener('drop', handleDrop, false);
+
+    function handleDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+
+        if (files.length > 0) {
+            // Only take the first file
+            const file = files[0];
+
+            // Update the file input
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+
+            // Show selected file name
+            if (selectedFileName) {
+                selectedFileName.textContent = `Selected: ${file.name}`;
+                selectedFileName.style.display = 'block';
+            }
+
+            showToast('File ready to upload', 'info');
+        }
+    }
+
+    // Show selected file name when using file input
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            const file = fileInput.files[0];
+            if (selectedFileName) {
+                selectedFileName.textContent = `Selected: ${file.name}`;
+                selectedFileName.style.display = 'block';
+            }
+        }
+    });
 }
 
 /**
@@ -1153,6 +1324,9 @@ function renderFiles(files) {
                 <button class="btn btn-secondary btn-small file-download-btn" title="Download file">
                     <span>⬇</span> Download
                 </button>
+                <button class="btn btn-primary btn-small file-tools-btn" title="Open in Tools">
+                    Tools
+                </button>
                 <button class="btn btn-danger btn-small file-delete-btn" title="Delete file">
                     <span>🗑</span> Delete
                 </button>
@@ -1183,6 +1357,15 @@ function attachFileEventListeners() {
             const downloadId = fileItem.dataset.downloadId;
             const filename = fileItem.querySelector('.file-name').textContent;
             downloadVideo(downloadId, filename);
+        });
+    });
+
+    // Add event listeners to all tools buttons
+    document.querySelectorAll('.file-tools-btn').forEach(button => {
+        button.addEventListener('click', function() {
+            const fileItem = this.closest('.file-item');
+            const downloadId = fileItem.dataset.downloadId;
+            openInTools(downloadId);
         });
     });
 
@@ -1430,6 +1613,511 @@ async function downloadSelectedAsZip() {
     }
 }
 
+// ========================================
+// TOOLS TAB FUNCTIONS
+// ========================================
+
+/**
+ * Show tools status indicator
+ */
+function showToolsStatus(message, type = 'info') {
+    const indicator = document.getElementById('tools-status-indicator');
+    const messageEl = document.getElementById('tools-status-message');
+
+    if (indicator && messageEl) {
+        messageEl.textContent = message;
+
+        indicator.className = 'tools-status-indicator';
+        if (type === 'success') {
+            indicator.classList.add('success');
+        } else if (type === 'error') {
+            indicator.classList.add('error');
+        }
+
+        indicator.style.display = 'block';
+    }
+}
+
+/**
+ * Hide tools status indicator
+ */
+function hideToolsStatus() {
+    const indicator = document.getElementById('tools-status-indicator');
+    if (indicator) {
+        indicator.style.display = 'none';
+    }
+}
+
+/**
+ * Load tools tab - initialize all tool components
+ */
+async function loadToolsTab() {
+    console.log('Loading tools tab...');
+    showToolsStatus('Loading tools...');
+
+    await loadSourceVideosForTools();
+    await loadConversions();
+    initToolSwitcher();
+    checkForPreselectedVideo();
+
+    // Hide status after a moment
+    setTimeout(hideToolsStatus, 1000);
+}
+
+/**
+ * Initialize tool switcher (MP3 vs Transform)
+ */
+function initToolSwitcher() {
+    const toolButtons = document.querySelectorAll('.tool-btn');
+    const toolContents = document.querySelectorAll('.tool-content');
+
+    toolButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const toolType = btn.dataset.tool;
+
+            // Update active button
+            toolButtons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            // Show selected tool content
+            toolContents.forEach(c => c.classList.remove('active'));
+            const toolContent = document.getElementById(`${toolType}-tool`);
+            if (toolContent) {
+                toolContent.classList.add('active');
+            }
+        });
+    });
+}
+
+/**
+ * Load available videos for tool dropdowns
+ */
+async function loadSourceVideosForTools() {
+    try {
+        const response = await fetch(`${API_BASE}/api/files`);
+        const files = await response.json();
+
+        // Populate MP3 source dropdown
+        const mp3Select = document.getElementById('mp3-source-video-select');
+        if (mp3Select) {
+            mp3Select.innerHTML = '<option value="">-- Select a video --</option>';
+            files.forEach(file => {
+                mp3Select.innerHTML += `<option value="${file.id}">${file.filename}</option>`;
+            });
+
+            // Enable button when video selected
+            mp3Select.addEventListener('change', () => {
+                const btn = document.getElementById('start-mp3-conversion-btn');
+                if (btn) {
+                    btn.disabled = !mp3Select.value;
+                }
+
+                const sourceInfo = document.getElementById('mp3-source-info');
+                const selectedName = document.getElementById('mp3-selected-video-name');
+                if (mp3Select.value && sourceInfo && selectedName) {
+                    sourceInfo.style.display = 'block';
+                    selectedName.textContent = mp3Select.options[mp3Select.selectedIndex].text;
+                } else if (sourceInfo) {
+                    sourceInfo.style.display = 'none';
+                }
+            });
+        }
+
+        // Populate transform source dropdown
+        const transformSelect = document.getElementById('transform-source-video-select');
+        if (transformSelect) {
+            transformSelect.innerHTML = '<option value="">-- Select a video --</option>';
+            files.forEach(file => {
+                transformSelect.innerHTML += `<option value="${file.id}">${file.filename}</option>`;
+            });
+
+            // Enable button when video selected
+            transformSelect.addEventListener('change', () => {
+                const btn = document.getElementById('apply-transform-btn');
+                if (btn) {
+                    btn.disabled = !transformSelect.value;
+                }
+
+                const sourceInfo = document.getElementById('transform-source-info');
+                const selectedName = document.getElementById('transform-selected-video-name');
+                if (transformSelect.value && sourceInfo && selectedName) {
+                    sourceInfo.style.display = 'block';
+                    selectedName.textContent = transformSelect.options[transformSelect.selectedIndex].text;
+                } else if (sourceInfo) {
+                    sourceInfo.style.display = 'none';
+                }
+            });
+        }
+
+    } catch (error) {
+        console.error('Failed to load source videos:', error);
+    }
+}
+
+/**
+ * Start MP3 conversion
+ */
+async function submitVideoToMp3Conversion() {
+    const sourceId = document.getElementById('mp3-source-video-select')?.value;
+    const quality = document.getElementById('audio-quality-select')?.value;
+    const btn = document.getElementById('start-mp3-conversion-btn');
+
+    if (!sourceId) {
+        showToast('Please select a video', 'error');
+        return;
+    }
+
+    // Show loading state
+    const originalContent = btn?.innerHTML;
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = 'Starting conversion...';
+    }
+
+    try {
+        console.log('Starting MP3 conversion:', { sourceId, quality });
+        showToolsStatus('Queueing MP3 conversion...');
+
+        const response = await fetch(`${API_BASE}/api/tools/video-to-mp3`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source_download_id: sourceId,
+                audio_quality: parseInt(quality)
+            })
+        });
+
+        console.log('Conversion response status:', response.status);
+
+        if (response.ok) {
+            const conversion = await response.json();
+            console.log('Conversion created:', conversion);
+
+            if (conversion.status === 'completed') {
+                showToolsStatus('Video was already converted!', 'success');
+                showToast('This video was already converted to MP3', 'info');
+            } else {
+                showToolsStatus('MP3 conversion queued successfully!', 'success');
+                showToast('MP3 conversion queued successfully!', 'success');
+            }
+
+            // Immediately load conversions to show the queued item
+            await loadConversions();
+
+            // Hide status after 3 seconds
+            setTimeout(hideToolsStatus, 3000);
+        } else {
+            const error = await response.json();
+            console.error('Conversion failed:', error);
+            showToolsStatus('Conversion failed: ' + (error.detail || 'Unknown error'), 'error');
+            showToast(error.detail || 'Conversion failed', 'error');
+            setTimeout(hideToolsStatus, 5000);
+        }
+    } catch (error) {
+        showToolsStatus('Failed to start conversion', 'error');
+        showToast('Failed to start conversion', 'error');
+        console.error('Conversion error:', error);
+        setTimeout(hideToolsStatus, 5000);
+    } finally {
+        // Restore button state
+        if (btn && originalContent) {
+            btn.disabled = false;
+            btn.innerHTML = originalContent;
+        }
+    }
+}
+
+/**
+ * Load conversions (both active and completed)
+ */
+async function loadConversions() {
+    try {
+        console.log('Loading conversions from API...');
+        const response = await fetch(`${API_BASE}/api/tools/conversions`);
+
+        if (!response.ok) {
+            console.error('Failed to fetch conversions:', response.status);
+            return;
+        }
+
+        const conversions = await response.json();
+        console.log('Loaded conversions:', conversions);
+
+        const active = conversions.filter(c =>
+            c.status === 'queued' || c.status === 'converting'
+        );
+        const completed = conversions.filter(c => c.status === 'completed');
+
+        console.log('Active conversions:', active);
+        console.log('Completed conversions:', completed);
+
+        renderActiveConversions(active);
+        renderAudioFiles(completed);
+    } catch (error) {
+        console.error('Failed to load conversions:', error);
+    }
+}
+
+/**
+ * Render active conversions with progress
+ */
+function renderActiveConversions(conversions) {
+    const container = document.getElementById('active-conversions-list');
+    console.log('Rendering active conversions, container found:', !!container, 'count:', conversions.length);
+
+    if (!container) {
+        console.error('active-conversions-list container not found!');
+        return;
+    }
+
+    if (conversions.length === 0) {
+        container.innerHTML = '<p class="empty-state">No active operations</p>';
+        return;
+    }
+
+    const html = conversions.map(conv => {
+        // Determine operation type and display label
+        let operationType = '';
+        let statusLabel = conv.status;
+
+        if (conv.tool_type.startsWith('video_transform_')) {
+            const transformType = conv.tool_type.replace('video_transform_', '');
+            const transformNames = {
+                'hflip': 'Horizontal Flip',
+                'vflip': 'Vertical Flip',
+                'rotate90': 'Rotate 90°',
+                'rotate180': 'Rotate 180°',
+                'rotate270': 'Rotate 270°'
+            };
+            operationType = `🎬 ${transformNames[transformType] || transformType}`;
+        } else if (conv.tool_type === 'video_to_mp3') {
+            operationType = '🎵 MP3 Conversion';
+        } else {
+            operationType = conv.tool_type;
+        }
+
+        return `
+            <div class="conversion-item">
+                <div class="conversion-info">
+                    <div style="display: flex; flex-direction: column; gap: 0.25rem;">
+                        <strong>${conv.output_filename || 'Processing...'}</strong>
+                        <span style="font-size: 0.85rem; color: var(--text-muted);">${operationType}</span>
+                    </div>
+                    <span class="conversion-status">${statusLabel}</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: ${conv.progress}%"></div>
+                </div>
+                <span class="progress-text">${conv.progress.toFixed(1)}%</span>
+            </div>
+        `;
+    }).join('');
+
+    console.log('Setting active conversions HTML, length:', html.length);
+    container.innerHTML = html;
+}
+
+/**
+ * Render completed audio files
+ */
+function renderAudioFiles(conversions) {
+    const container = document.getElementById('audio-files-list');
+    console.log('Rendering audio files, container found:', !!container, 'count:', conversions.length);
+
+    if (!container) {
+        console.error('audio-files-list container not found!');
+        return;
+    }
+
+    if (conversions.length === 0) {
+        container.innerHTML = '<p class="empty-state">No audio files yet</p>';
+        return;
+    }
+
+    const html = conversions.map(conv => `
+        <div class="audio-file-item">
+            <div class="file-info">
+                <strong>${conv.output_filename}</strong>
+                <span class="file-size">${formatBytes(conv.output_size || 0)}</span>
+            </div>
+            <div class="file-actions">
+                <button class="btn btn-primary btn-small" onclick="downloadAudioFile('${conv.id}', '${conv.output_filename}')">
+                    <span>⬇️</span> Download
+                </button>
+                <button class="btn btn-danger btn-small" onclick="deleteAudioFile('${conv.id}')">
+                    <span>🗑️</span> Delete
+                </button>
+            </div>
+        </div>
+    `).join('');
+
+    console.log('Setting audio files HTML, length:', html.length);
+    container.innerHTML = html;
+}
+
+/**
+ * Download audio file
+ */
+function downloadAudioFile(conversionId, filename) {
+    window.open(`${API_BASE}/api/tools/audio/${conversionId}`, '_blank');
+}
+
+/**
+ * Delete audio file
+ */
+async function deleteAudioFile(conversionId) {
+    if (!confirm('Delete this audio file?')) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/api/tools/conversions/${conversionId}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            showToast('Audio file deleted', 'success');
+            await loadConversions();
+        } else {
+            const error = await response.json();
+            showToast(error.detail || 'Failed to delete audio file', 'error');
+        }
+    } catch (error) {
+        showToast('Failed to delete audio file', 'error');
+        console.error('Delete error:', error);
+    }
+}
+
+/**
+ * Apply video transformation
+ */
+async function applyVideoTransformation() {
+    const sourceId = document.getElementById('transform-source-video-select')?.value;
+    const transformType = document.getElementById('transform-type-select')?.value;
+    const transformSelect = document.getElementById('transform-type-select');
+    const transformName = transformSelect?.options[transformSelect.selectedIndex]?.text;
+
+    if (!sourceId) {
+        showToast('Please select a video', 'error');
+        return;
+    }
+
+    if (!confirm(`Apply "${transformName}" to this video? This will modify the original file and cannot be undone.`)) {
+        return;
+    }
+
+    const btn = document.getElementById('apply-transform-btn');
+    if (!btn) return;
+
+    const originalContent = btn.innerHTML;
+
+    try {
+        // Show loading state
+        btn.disabled = true;
+        btn.innerHTML = 'Transforming...';
+
+        const response = await fetch(`${API_BASE}/api/tools/transform`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                download_id: sourceId,
+                transform_type: transformType
+            })
+        });
+
+        if (response.ok) {
+            showToast('Video transformed successfully', 'success');
+            addTransformHistory(transformName || transformType);
+
+            // Reset form
+            const transformSourceSelect = document.getElementById('transform-source-video-select');
+            const transformSourceInfo = document.getElementById('transform-source-info');
+            if (transformSourceSelect) {
+                transformSourceSelect.value = '';
+            }
+            if (transformSourceInfo) {
+                transformSourceInfo.style.display = 'none';
+            }
+        } else {
+            const error = await response.json();
+            showToast(error.detail || 'Transformation failed', 'error');
+        }
+    } catch (error) {
+        showToast('Failed to transform video', 'error');
+        console.error('Transform error:', error);
+    } finally {
+        // Restore button state
+        btn.disabled = false;
+        btn.innerHTML = originalContent;
+    }
+}
+
+/**
+ * Add transformation to history
+ */
+function addTransformHistory(transformName) {
+    const container = document.getElementById('transform-history-list');
+    if (!container) return;
+
+    const timestamp = new Date().toLocaleString();
+    const historyItem = `
+        <div class="history-item">
+            <span>${transformName}</span>
+            <span class="timestamp">${timestamp}</span>
+        </div>
+    `;
+
+    if (container.innerHTML.includes('empty-state')) {
+        container.innerHTML = historyItem;
+    } else {
+        container.insertAdjacentHTML('afterbegin', historyItem);
+    }
+}
+
+/**
+ * Open in Tools from Browse Files
+ */
+function openInTools(downloadId) {
+    // Store in sessionStorage
+    sessionStorage.setItem('toolsSourceVideo', downloadId);
+
+    // Switch to tools tab
+    const toolsBtn = document.querySelector('[data-tab="tools"]');
+    if (toolsBtn) {
+        toolsBtn.click();
+    }
+}
+
+/**
+ * Check for preselected video (from "Open in Tools")
+ */
+function checkForPreselectedVideo() {
+    const preselectedId = sessionStorage.getItem('toolsSourceVideo');
+    if (!preselectedId) return;
+
+    // Pre-select in MP3 tool (default tool)
+    const mp3Select = document.getElementById('mp3-source-video-select');
+    if (mp3Select) {
+        mp3Select.value = preselectedId;
+        mp3Select.dispatchEvent(new Event('change'));
+    }
+
+    // Clear sessionStorage
+    sessionStorage.removeItem('toolsSourceVideo');
+
+    // Show highlight animation
+    const sourceInfo = document.getElementById('mp3-source-info');
+    if (sourceInfo) {
+        sourceInfo.style.animation = 'highlight 2s ease';
+    }
+}
+
+/**
+ * Poll for conversion progress continuously (not just when Tools tab is active)
+ * This ensures active conversions are tracked and displayed in real-time
+ */
+setInterval(async () => {
+    await loadConversions();
+}, 2000);
+
 // Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize preferences first
@@ -1440,6 +2128,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Download form submission
     document.getElementById('new-download-form').addEventListener('submit', submitDownload);
+
+    // Video upload form submission
+    document.getElementById('video-upload-form').addEventListener('submit', submitVideoUpload);
+
+    // Initialize drag and drop for video upload
+    initDragAndDrop();
 
     // URL input for auto-cookie selection
     document.getElementById('video-url').addEventListener('input', handleUrlInput);
@@ -1467,6 +2161,17 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('select-all-files-btn').addEventListener('click', toggleSelectAll);
     document.getElementById('download-selected-btn').addEventListener('click', downloadSelectedAsZip);
     document.getElementById('delete-selected-btn').addEventListener('click', deleteSelectedFiles);
+
+    // Tools tab controls
+    const mp3ConversionBtn = document.getElementById('start-mp3-conversion-btn');
+    if (mp3ConversionBtn) {
+        mp3ConversionBtn.addEventListener('click', submitVideoToMp3Conversion);
+    }
+
+    const transformBtn = document.getElementById('apply-transform-btn');
+    if (transformBtn) {
+        transformBtn.addEventListener('click', applyVideoTransformation);
+    }
 
     // Initial data load
     loadDownloads();
