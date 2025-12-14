@@ -9,26 +9,14 @@ from typing import Optional
 # Location of the settings file on disk
 SETTINGS_FILE = "settings.json"
 
-# Default settings used when creating a new settings file
-# or when merging with existing settings to ensure all keys are present
+# Default settings used when creating a new settings file or merging with existing settings
 DEFAULT_SETTINGS = {
-    # Maximum number of downloads that can run simultaneously
     "max_concurrent_downloads": 2,
-
-    # Download speed limit in MiB/s (0 = unlimited)
-    "max_download_speed": 0,
-
-    # Minimum free disk space in MB before pausing new downloads
-    # Prevents filling up the disk completely
-    "min_disk_space_mb": 1000,
-
-    # List of recent compression ratios from ZIP operations
-    # Used to calculate average and improve size estimates over time
-    "zip_compression_samples": [],
-
-    # Average compression ratio for ZIP files (ratio of compressed size to original)
-    # Default 95% because video files are already compressed and don't shrink much
-    "zip_avg_compression_ratio": 0.95,
+    "max_concurrent_conversions": 1,  # Default 1 for CPU-only systems
+    "max_download_speed": 0,  # MiB/s (0 = unlimited)
+    "min_disk_space_mb": 1000,  # Minimum free disk space before pausing downloads
+    "zip_compression_samples": [],  # Recent compression ratios for size estimates
+    "zip_avg_compression_ratio": 0.95,  # Default 95% (videos don't compress much)
 }
 
 
