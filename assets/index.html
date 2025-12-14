@@ -25,6 +25,9 @@
             <button class="tab-button" data-tab="tools">Tools</button>
             <button class="tab-button" data-tab="settings">Settings</button>
             <button class="tab-button" data-tab="logs">Logs</button>
+            <button class="help-button" id="help-modal-btn" title="Keyboard shortcuts and tips">
+                <span style="font-size: 1.2rem;">?</span> Help
+            </button>
         </div>
 
         <!-- Downloads Tab -->
@@ -39,12 +42,17 @@
                                 <label for="video-url">Video URL(s)</label>
                                 <textarea id="video-url" placeholder="https://..." rows="3" required></textarea>
                                 <p class="form-help">Enter one or more URLs, one per line. Multiple URLs will use no cookies by default.</p>
+                                <p class="form-error" id="video-url-error"></p>
                             </div>
                             <div class="form-group">
-                                <label for="cookies-file">Cookies File (Optional)</label>
+                                <label for="cookies-file">
+                                    Cookies File (Optional)
+                                    <span class="help-icon" title="Required for downloading private or age-restricted videos. Cookies authenticate you with the video platform.">?</span>
+                                </label>
                                 <select id="cookies-file">
                                     <option value="">None</option>
                                 </select>
+                                <p class="cookie-hint" id="cookie-hint" style="display: none;"></p>
                             </div>
                             <button type="submit" class="btn btn-primary">Download</button>
                         </form>
@@ -53,7 +61,11 @@
                     <section class="active-downloads">
                         <h2>Active & Queued</h2>
                         <div id="active-downloads-list" class="downloads-list">
-                            <p class="empty-state">No active downloads</p>
+                            <div class="empty-state-enhanced">
+                                <span class="empty-icon">📥</span>
+                                <h3>No active downloads</h3>
+                                <p>Paste a video URL in the form above to get started</p>
+                            </div>
                         </div>
                     </section>
                 </div>
@@ -63,7 +75,11 @@
                     <section class="past-downloads">
                         <h2>Download History</h2>
                         <div id="past-downloads-list" class="downloads-list">
-                            <p class="empty-state">No downloads yet</p>
+                            <div class="empty-state-enhanced">
+                                <span class="empty-icon">📝</span>
+                                <h3>No downloads yet</h3>
+                                <p>Your completed downloads will appear here</p>
+                            </div>
                         </div>
                     </section>
                 </div>
@@ -104,6 +120,17 @@
                 <div class="file-browser-header">
                     <h2>Downloaded Files</h2>
                     <div class="file-browser-actions">
+                        <div class="file-sort-control">
+                            <label for="file-sort-select">Sort by:</label>
+                            <select id="file-sort-select">
+                                <option value="name-asc">Name (A-Z)</option>
+                                <option value="name-desc">Name (Z-A)</option>
+                                <option value="size-desc">Size (Largest)</option>
+                                <option value="size-asc">Size (Smallest)</option>
+                                <option value="date-desc">Date (Newest)</option>
+                                <option value="date-asc">Date (Oldest)</option>
+                            </select>
+                        </div>
                         <button id="select-all-files-btn" class="btn btn-secondary btn-small">Select All</button>
                         <button id="download-selected-btn" class="btn btn-primary btn-small" disabled>
                             <span>⬇</span> Download as ZIP
@@ -140,42 +167,37 @@
                 </div>
             </section>
 
-            <section class="disk-space glass-card">
-                <h2>Disk Space</h2>
-                <div class="info-grid">
-                    <div class="info-item">
-                        <span class="info-label">Total:</span>
-                        <span class="info-value" id="disk-total">-</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Used:</span>
-                        <span class="info-value" id="disk-used">-</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Free:</span>
-                        <span class="info-value" id="disk-free">-</span>
-                    </div>
-                </div>
-                <div class="progress-bar">
-                    <div id="disk-usage-bar" class="progress-fill" style="width: 0%"></div>
-                </div>
-                <p class="disk-percent" id="disk-percent">0% used</p>
-            </section>
-
             <section class="queue-settings glass-card">
                 <h2>Queue Settings</h2>
                 <div class="form-group">
-                    <label for="max-concurrent">Max Concurrent Downloads:</label>
+                    <label for="max-concurrent">
+                        Max Concurrent Downloads:
+                        <span class="help-icon" title="How many videos can download simultaneously. Higher values use more bandwidth and CPU.">?</span>
+                    </label>
                     <input type="number" id="max-concurrent" min="1" max="10" value="2">
                     <p class="form-help">Maximum number of downloads running at the same time</p>
                 </div>
                 <div class="form-group">
-                    <label for="max-speed">Max Download Speed (MiB/s):</label>
+                    <label for="max-concurrent-conversions">
+                        Max Concurrent Conversions:
+                        <span class="help-icon" title="How many MP3 conversions and video transforms can run simultaneously. These are CPU-intensive operations. Recommended: 1 for systems without GPU acceleration.">?</span>
+                    </label>
+                    <input type="number" id="max-concurrent-conversions" min="1" max="5" value="1">
+                    <p class="form-help">Maximum number of MP3/video conversions running at the same time</p>
+                </div>
+                <div class="form-group">
+                    <label for="max-speed">
+                        Max Download Speed (MiB/s):
+                        <span class="help-icon" title="Limits download speed per file. Set to 0 for unlimited. Useful for preventing bandwidth saturation.">?</span>
+                    </label>
                     <input type="number" id="max-speed" min="0" value="0">
                     <p class="form-help">0 = unlimited. Limit download speed for each file</p>
                 </div>
                 <div class="form-group">
-                    <label for="min-disk-space">Pause Downloads at (MB free):</label>
+                    <label for="min-disk-space">
+                        Pause Downloads at (MB free):
+                        <span class="help-icon" title="Prevents filling up your disk completely. Downloads automatically pause when free space drops below this amount.">?</span>
+                    </label>
                     <input type="number" id="min-disk-space" min="100" step="100" value="1000">
                     <p class="form-help">Stop new downloads when disk space is below this threshold</p>
                 </div>
@@ -210,12 +232,16 @@
                             <option value="solarized">Solarized</option>
                             <option value="arctic">Arctic</option>
                             <option value="aqua">Aqua</option>
+                            <option value="fireplace">Fireplace</option>
                         </select>
                     </div>
                 </div>
                 <div class="preference-item">
                     <div class="preference-info">
-                        <strong>Auto-Select Cookies</strong>
+                        <strong>
+                            Auto-Select Cookies
+                            <span class="help-icon" title="Automatically picks the right cookie file for your URL (e.g., instagram.txt for Instagram links). Makes downloading private content easier.">?</span>
+                        </strong>
                         <p>Automatically select matching cookie file based on URL domain</p>
                     </div>
                     <label class="toggle-switch">
@@ -223,27 +249,103 @@
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
+                <div class="preference-item">
+                    <div class="preference-info">
+                        <strong>
+                            Enhanced Accessibility
+                            <span class="help-icon" title="Enables keyboard navigation enhancements, ARIA attributes, and enhanced focus indicators for improved accessibility.">?</span>
+                        </strong>
+                        <p>Enable optional accessibility features (ARIA attributes, keyboard shortcuts, enhanced focus)</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="accessibility-toggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
             </section>
 
             <section class="cleanup glass-card">
                 <h2>Cleanup</h2>
-                <p>Remove failed downloads and orphaned files to free up space.</p>
-                <div class="form-group">
-                    <label for="cleanup-days">Remove failed downloads older than:</label>
-                    <select id="cleanup-days">
-                        <option value="1">1 day</option>
-                        <option value="7" selected>7 days</option>
-                        <option value="30">30 days</option>
-                        <option value="90">90 days</option>
-                    </select>
+                <p>Remove failed downloads and stuck conversions to free up space.</p>
+
+                <div class="cleanup-subsection">
+                    <h3>Failed Downloads</h3>
+                    <p class="cleanup-description">Remove failed downloads and orphaned files.</p>
+                    <div class="form-group">
+                        <label for="cleanup-days">Remove downloads older than:</label>
+                        <select id="cleanup-days">
+                            <option value="1">1 day</option>
+                            <option value="7" selected>7 days</option>
+                            <option value="30">30 days</option>
+                            <option value="90">90 days</option>
+                        </select>
+                    </div>
+                    <button id="cleanup-btn" class="btn btn-danger">Clean Up Failed Downloads</button>
+                    <div id="cleanup-stats" class="cleanup-stats" style="display: none;">
+                        <p><strong>Cleanup Results:</strong></p>
+                        <p>Downloads removed: <span id="cleanup-downloads">0</span></p>
+                        <p>Files removed: <span id="cleanup-files">0</span></p>
+                        <p>Space freed: <span id="cleanup-space">0 MB</span></p>
+                    </div>
                 </div>
-                <button id="cleanup-btn" class="btn btn-danger">Clean Up Failed Downloads</button>
-                <div id="cleanup-stats" class="cleanup-stats" style="display: none;">
-                    <p><strong>Cleanup Results:</strong></p>
-                    <p>Downloads removed: <span id="cleanup-downloads">0</span></p>
-                    <p>Files removed: <span id="cleanup-files">0</span></p>
-                    <p>Space freed: <span id="cleanup-space">0 MB</span></p>
+
+                <div class="cleanup-divider"></div>
+
+                <div class="cleanup-subsection">
+                    <h3>Stale Conversions</h3>
+                    <p class="cleanup-description">Remove conversions stuck in "queued" or "converting" state.</p>
+                    <div class="form-group">
+                        <label for="cleanup-hours">Remove conversions stuck for more than:</label>
+                        <select id="cleanup-hours">
+                            <option value="1" selected>1 hour</option>
+                            <option value="2">2 hours</option>
+                            <option value="6">6 hours</option>
+                            <option value="24">24 hours</option>
+                        </select>
+                    </div>
+                    <button id="cleanup-conversions-btn" class="btn btn-danger">Clean Up Stale Conversions</button>
+                    <div id="conversion-cleanup-stats" class="cleanup-stats" style="display: none;">
+                        <p><strong>Cleanup Results:</strong></p>
+                        <p>Conversions removed: <span id="cleanup-conversions-count">0</span></p>
+                        <p>Files removed: <span id="cleanup-conversion-files">0</span></p>
+                        <p>Space freed: <span id="cleanup-conversion-space">0 MB</span></p>
+                    </div>
                 </div>
+            </section>
+
+            <!-- Cookie Management Section -->
+            <section class="cookie-management glass-card">
+                <h2>Cookie Files</h2>
+                <p style="color: var(--text-muted); margin-bottom: 1rem;">
+                    Upload cookie files to download private or authenticated content. Cookie files must be in Netscape format (.txt) and under 5KB.
+                </p>
+
+                <div class="cookie-upload-section">
+                    <input type="file" id="cookie-file-input" accept=".txt" style="display: none;">
+                    <button id="upload-cookie-btn" class="btn btn-primary">
+                        📤 Upload Cookie File
+                    </button>
+                </div>
+
+                <div id="cookie-files-list" style="margin-top: 1.5rem;">
+                    <p class="empty-state">Loading cookie files...</p>
+                </div>
+            </section>
+
+            <!-- Hardware Information Section -->
+            <section class="hardware-info glass-card">
+                <h2>Server Hardware Information</h2>
+                <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+                    View server hardware capabilities and available acceleration technologies for video processing.
+                </p>
+
+                <div id="hardware-info-content">
+                    <p class="empty-state">Loading hardware information...</p>
+                </div>
+
+                <button id="refresh-hardware-btn" class="btn btn-secondary" style="margin-top: 1rem;">
+                    🔄 Refresh Hardware Info
+                </button>
             </section>
 
             <footer class="settings-footer">
@@ -305,13 +407,6 @@
 
         <!-- Tools Tab -->
         <div id="tools-tab" class="tab-content">
-            <!-- Status Indicator -->
-            <div id="tools-status-indicator" class="tools-status-indicator" style="display: none;">
-                <div class="status-content">
-                    <span id="tools-status-message">Processing...</span>
-                </div>
-            </div>
-
             <!-- Upload Tip -->
             <section class="upload-tip glass-card">
                 <p style="color: var(--text-muted); font-size: 0.95rem; margin: 0;">
@@ -319,106 +414,111 @@
                 </p>
             </section>
 
-            <!-- Tool Selector -->
-            <section class="tools-selector glass-card">
-                <h2>Available Tools</h2>
-                <div class="tool-buttons">
-                    <button class="tool-btn active" data-tool="video-to-mp3">
-                        Video to MP3
-                    </button>
-                    <button class="tool-btn" data-tool="video-transform">
-                        Transform Video
-                    </button>
+            <div class="tools-split-layout">
+                <!-- Left Column: Tool Forms (30%) -->
+                <div class="tools-left-column">
+                    <!-- Video to MP3 Tool -->
+                    <section class="tool-form glass-card">
+                        <h2>Convert Video to MP3</h2>
+                        <div id="mp3-source-info" class="source-info" style="display: none;">
+                            <strong>Selected video:</strong> <span id="mp3-selected-video-name"></span>
+                        </div>
+                        <div class="form-group">
+                            <label>Select Source Video:</label>
+                            <select id="mp3-source-video-select">
+                                <option value="">-- Select a video --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                Audio Quality:
+                                <span class="help-icon" title="Higher quality means better sound but larger file size. 128 kbps is a good balance for most uses.">?</span>
+                            </label>
+                            <select id="audio-quality-select">
+                                <option value="192">High (192 kbps)</option>
+                                <option value="128" selected>Medium (128 kbps)</option>
+                                <option value="96">Low (96 kbps)</option>
+                            </select>
+                        </div>
+                        <button id="start-mp3-conversion-btn" class="btn btn-primary" disabled>
+                            Convert to MP3
+                        </button>
+                    </section>
+
+                    <!-- Video Transform Tool -->
+                    <section class="tool-form glass-card">
+                        <h2>Transform Video</h2>
+                        <div class="warning-box">
+                            <strong>⚠️ Warning:</strong> Transformations modify the original video file and cannot be undone.
+                        </div>
+                        <div id="transform-source-info" class="source-info" style="display: none;">
+                            <strong>Selected video:</strong> <span id="transform-selected-video-name"></span>
+                        </div>
+                        <div class="form-group">
+                            <label>Select Source Video:</label>
+                            <select id="transform-source-video-select">
+                                <option value="">-- Select a video --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Transformation:</label>
+                            <select id="transform-type-select">
+                                <option value="hflip">Flip Horizontally (Mirror)</option>
+                                <option value="vflip">Flip Vertically</option>
+                                <option value="rotate90">Rotate 90° Clockwise</option>
+                                <option value="rotate180">Rotate 180°</option>
+                                <option value="rotate270">Rotate 270° Clockwise (90° Counter-clockwise)</option>
+                            </select>
+                        </div>
+                        <button id="apply-transform-btn" class="btn btn-warning" disabled>
+                            Apply Transformation
+                        </button>
+                    </section>
                 </div>
-            </section>
 
-            <!-- Video to MP3 Tool -->
-            <div id="video-to-mp3-tool" class="tool-content active">
-                <section class="tool-form glass-card">
-                    <h2>Convert Video to MP3</h2>
-                    <div id="mp3-source-info" class="source-info" style="display: none;">
-                        <strong>Selected video:</strong> <span id="mp3-selected-video-name"></span>
-                    </div>
-                    <div class="form-group">
-                        <label>Select Source Video:</label>
-                        <select id="mp3-source-video-select">
-                            <option value="">-- Select a video --</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Audio Quality:</label>
-                        <select id="audio-quality-select">
-                            <option value="192">High (192 kbps)</option>
-                            <option value="128" selected>Medium (128 kbps)</option>
-                            <option value="96">Low (96 kbps)</option>
-                        </select>
-                    </div>
-                    <button id="start-mp3-conversion-btn" class="btn btn-primary" disabled>
-                        Convert to MP3
-                    </button>
-                </section>
+                <!-- Right Column: Active & Completed (70%) -->
+                <div class="tools-right-column">
+                    <section class="active-conversions">
+                        <h2>Active Operations</h2>
+                        <div id="active-conversions-list" class="conversions-list">
+                            <p class="empty-state">No active operations</p>
+                        </div>
+                    </section>
 
-                <section class="active-conversions">
-                    <h2>Active Operations</h2>
-                    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
-                        MP3 conversions and video transformations in progress
-                    </p>
-                    <div id="active-conversions-list" class="conversions-list">
-                        <p class="empty-state">No active operations</p>
-                    </div>
-                </section>
-
-                <section class="completed-audio-files">
-                    <h2>Converted Audio Files</h2>
-                    <div id="audio-files-list" class="audio-files-list">
-                        <p class="empty-state">No audio files yet</p>
-                    </div>
-                </section>
-            </div>
-
-            <!-- Video Transform Tool -->
-            <div id="video-transform-tool" class="tool-content">
-                <section class="tool-form glass-card">
-                    <h2>Transform Video</h2>
-                    <div class="warning-box">
-                        <strong>Warning:</strong> Transformations modify the original video file.
-                        This action cannot be undone.
-                    </div>
-                    <div id="transform-source-info" class="source-info" style="display: none;">
-                        <strong>Selected video:</strong> <span id="transform-selected-video-name"></span>
-                    </div>
-                    <div class="form-group">
-                        <label>Select Source Video:</label>
-                        <select id="transform-source-video-select">
-                            <option value="">-- Select a video --</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Transformation:</label>
-                        <select id="transform-type-select">
-                            <option value="hflip">Flip Horizontally (Mirror)</option>
-                            <option value="vflip">Flip Vertically</option>
-                            <option value="rotate90">Rotate 90° Clockwise</option>
-                            <option value="rotate180">Rotate 180°</option>
-                            <option value="rotate270">Rotate 270° Clockwise (90° Counter-clockwise)</option>
-                        </select>
-                    </div>
-                    <button id="apply-transform-btn" class="btn btn-warning" disabled>
-                        Apply Transformation
-                    </button>
-                </section>
-
-                <section class="transform-history">
-                    <h2>Recent Transformations</h2>
-                    <div id="transform-history-list" class="history-list">
-                        <p class="empty-state">No transformations yet</p>
-                    </div>
-                </section>
+                    <section class="completed-conversions">
+                        <h2>Completed Conversions</h2>
+                        <div id="completed-conversions-list" class="conversions-list">
+                            <p class="empty-state">No completed conversions yet</p>
+                        </div>
+                    </section>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- Toast notifications -->
+    <!-- Help Modal -->
+    <div id="help-modal" class="help-modal" style="display: none;">
+        <div class="help-modal-content">
+            <div class="help-modal-header">
+                <h2 id="help-modal-title">📚 Help & Tips</h2>
+                <button class="help-modal-close" id="help-modal-close">&times;</button>
+            </div>
+
+            <!-- Main help content (populated by JavaScript) -->
+            <div class="help-modal-body" id="help-main-view">
+                <!-- Content loaded from documentation.json -->
+            </div>
+
+            <!-- Detail view (overlays main content) -->
+            <div class="help-detail-view" id="help-detail-view" style="display: none;">
+                <div id="help-detail-content">
+                    <!-- Detail content with back button populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="toast-container"></div>
 
     <script src="/assets/app.js"></script>

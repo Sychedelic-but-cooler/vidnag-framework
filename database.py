@@ -1,17 +1,69 @@
-from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, Enum
+from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, Enum, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import StaticPool
+from sqlalchemy.types import TypeDecorator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import enum
 import uuid
+
+
+class UTCDateTime(TypeDecorator):
+    """
+    Custom SQLAlchemy type that ensures all datetime values are timezone-aware (UTC).
+
+    SQLite stores datetime as strings without timezone info. This type ensures:
+    - When saving: datetime is converted to UTC
+    - When loading: naive datetime from DB is assumed to be UTC and made timezone-aware
+
+    This fixes the issue where frontend receives timestamps without timezone info,
+    causing JavaScript to interpret them as local time instead of UTC.
+    """
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        """Convert datetime to UTC before saving to database"""
+        if value is not None:
+            if value.tzinfo is None:
+                # If naive datetime, assume it's UTC
+                value = value.replace(tzinfo=timezone.utc)
+            else:
+                # Convert to UTC if it has a different timezone
+                value = value.astimezone(timezone.utc)
+            # Return as naive datetime for SQLite (it doesn't support timezone storage)
+            return value.replace(tzinfo=None)
+        return value
+
+    def process_result_value(self, value, dialect):
+        """Attach UTC timezone when loading from database"""
+        if value is not None:
+            # SQLite returns naive datetime - attach UTC timezone
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+        return value
 
 # SQLite database file location
 DATABASE_URL = "sqlite:///./downloads.db"
 
 # Create the database engine with SQLite-specific configuration
 # check_same_thread=False allows multiple threads to share the connection
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# StaticPool keeps a single connection for better SQLite performance
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool
+)
+
+# Enable WAL mode for better concurrency (readers don't block writers)
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_conn, connection_record):
+    """Set SQLite pragmas: WAL mode for concurrency, NORMAL synchronous for performance."""
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 
 # Session factory for creating database sessions
 # autocommit=False means we manually control transaction commits
@@ -45,45 +97,28 @@ class Download(Base):
     """
     __tablename__ = "downloads"
 
-    # Unique identifier generated automatically using UUID4
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-
-    # Original video URL provided by user
     url = Column(String, nullable=False)
-
-    # Current status of the download (queued, downloading, completed, failed)
     status = Column(Enum(DownloadStatus), default=DownloadStatus.QUEUED, nullable=False)
-
-    # Download progress as percentage (0.0 to 100.0)
     progress = Column(Float, default=0.0)
 
-    # User-facing filename for display purposes (original/sanitized name from video)
+    # User-facing filename for display purposes
     filename = Column(String, nullable=True)
 
-    # Internal UUID-based filename stored on disk (e.g., "550e8400-e29b-41d4-a716-446655440000.mp4")
-    # This isolates file operations from user-generated names, eliminating sanitization concerns
+    # Internal UUID-based filename stored on disk - isolates file operations from user-generated names
     internal_filename = Column(String, nullable=True)
 
-    # User-facing thumbnail filename for display
     thumbnail = Column(String, nullable=True)
 
     # Internal UUID-based thumbnail filename stored on disk
     internal_thumbnail = Column(String, nullable=True)
 
-    # Size of the downloaded file in bytes
     file_size = Column(Integer, nullable=True)
-
-    # Error message if download failed (null for successful downloads)
     error_message = Column(String, nullable=True)
-
-    # Optional cookies file used for this download (for authenticated content)
     cookies_file = Column(String, nullable=True)
-
-    # Timestamp when download was created (always in UTC timezone)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-
-    # Timestamp when download completed (null until finished)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    started_at = Column(UTCDateTime, nullable=True)  # When download actually started (not when queued)
+    completed_at = Column(UTCDateTime, nullable=True)
 
 
 class ToolConversion(Base):
@@ -93,19 +128,10 @@ class ToolConversion(Base):
     """
     __tablename__ = "tool_conversions"
 
-    # Unique identifier generated automatically using UUID4
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-
-    # Link to source video (foreign key to downloads.id)
     source_download_id = Column(String, nullable=False)
-
-    # Type of tool/conversion (e.g., "video_to_mp3")
     tool_type = Column(String, nullable=False)
-
-    # Current status of the conversion (queued, converting, completed, failed)
     status = Column(Enum(ConversionStatus), default=ConversionStatus.QUEUED, nullable=False)
-
-    # Conversion progress as percentage (0.0 to 100.0)
     progress = Column(Float, default=0.0)
 
     # User-facing output filename for display purposes
@@ -114,20 +140,14 @@ class ToolConversion(Base):
     # Internal UUID-based output filename stored on disk
     internal_output_filename = Column(String, nullable=True)
 
-    # Size of the output file in bytes
     output_size = Column(Integer, nullable=True)
 
-    # Audio quality setting for MP3 conversions (bitrate in kbps: 96, 128, 192, etc.)
+    # Audio quality for MP3 conversions (bitrate in kbps: 96, 128, 192, etc.)
     audio_quality = Column(Integer, nullable=True)
 
-    # Error message if conversion failed (null for successful conversions)
     error_message = Column(String, nullable=True)
-
-    # Timestamp when conversion was created (always in UTC timezone)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-
-    # Timestamp when conversion completed (null until finished)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    completed_at = Column(UTCDateTime, nullable=True)
 
 
 def init_db():
@@ -143,14 +163,7 @@ def init_db():
 def get_db():
     """
     Context manager for database sessions with automatic transaction handling.
-    Use this in regular Python code (not FastAPI endpoints).
-
-    Usage:
-        with get_db() as db:
-            downloads = db.query(Download).all()
-
-    Automatically commits on success and rolls back on errors.
-    Always closes the session when done.
+    Commits on success, rolls back on errors, always closes the session.
     """
     db = SessionLocal()
     try:
@@ -165,16 +178,8 @@ def get_db():
 
 def get_db_session():
     """
-    Generator for FastAPI dependency injection.
-    Use this with FastAPI's Depends() to get a database session in endpoints.
-
-    Usage:
-        @app.get("/api/downloads")
-        def get_downloads(db: Session = Depends(get_db_session)):
-            return db.query(Download).all()
-
-    Note: Does not auto-commit - caller is responsible for commits.
-    Always closes the session when the request is done.
+    FastAPI dependency injection for database sessions.
+    Does not auto-commit - caller is responsible for commits.
     """
     db = SessionLocal()
     try:

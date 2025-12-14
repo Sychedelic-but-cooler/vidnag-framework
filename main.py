@@ -37,6 +37,7 @@ import io
 import unicodedata
 import time
 import uuid
+import platform
 
 # Application modules
 from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db
@@ -89,59 +90,41 @@ def cleanup_old_logs():
 
 def set_directory_permissions():
     """
-    Set appropriate file permissions on critical application directories.
-    
-    Ensures:
-    - downloads/ directory: readable/writable by app, readable by others (755)
-    - logs/ directory: readable/writable by app, readable by others (755)
-    - data.db: readable/writable by app only (600)
-    - cookies/ directory: readable/writable by app (700)
-    - admin_settings.json: readable/writable by app (600)
-    
-    Permissions work correctly on Linux/macOS. Windows NTFS has different 
-    permission model but these settings don't harm and ensure cross-platform compatibility.
+    Set file permissions: downloads/logs (755), cookies (700), db/config (600).
+    Ensures proper security on Linux/macOS (no-op on Windows).
     """
     try:
         import stat
-        
-        # Directories that should be 755 (rwxr-xr-x)
-        # Owner can read/write/execute, others can read/execute
-        rwx_r_r_dirs = ["downloads", "logs", "assets", "backups"]
-        
-        for dir_path in rwx_r_r_dirs:
+
+        # Public directories: 755 (owner rwx, others rx)
+        for dir_path in ["downloads", "logs", "assets", "backups"]:
             if os.path.exists(dir_path):
                 try:
                     os.chmod(dir_path, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
                     logger.debug(f"Set permissions 755 on {dir_path}")
                 except Exception as e:
                     logger.warning(f"Could not set permissions on {dir_path}: {e}")
-        
-        # Directories that should be 700 (rwx------)
-        # Owner can read/write/execute, others cannot access
-        rwx_only_dirs = ["cookies"]
-        
-        for dir_path in rwx_only_dirs:
+
+        # Private directories: 700 (owner rwx only)
+        for dir_path in ["cookies"]:
             if os.path.exists(dir_path):
                 try:
                     os.chmod(dir_path, stat.S_IRWXU)
                     logger.debug(f"Set permissions 700 on {dir_path}")
                 except Exception as e:
                     logger.warning(f"Could not set permissions on {dir_path}: {e}")
-        
-        # Files that should be 600 (rw-------)
-        # Owner can read/write, others cannot access
-        rw_only_files = ["data.db", "admin_settings.json"]
-        
-        for file_path in rw_only_files:
+
+        # Private files: 600 (owner rw only)
+        for file_path in ["data.db", "admin_settings.json"]:
             if os.path.exists(file_path):
                 try:
                     os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
                     logger.debug(f"Set permissions 600 on {file_path}")
                 except Exception as e:
                     logger.warning(f"Could not set permissions on {file_path}: {e}")
-        
+
         logger.info("Directory permissions set successfully")
-    
+
     except Exception as e:
         logger.error(f"Error setting directory permissions: {e}")
 
@@ -155,8 +138,12 @@ async def lifespan(app: FastAPI):
     """
     # Startup sequence - runs when the application starts
     init_db()  # Create database tables if they don't exist
-    os.makedirs("downloads", exist_ok=True)  # Ensure download directory exists
-    os.makedirs("cookies", exist_ok=True)    # Ensure cookies directory exists
+
+    # Create all required directories if they don't exist
+    os.makedirs("downloads", exist_ok=True)  # Video download storage
+    os.makedirs("cookies", exist_ok=True)    # Cookie files for authenticated downloads
+    os.makedirs("logs", exist_ok=True)       # Application logs
+    os.makedirs("backups", exist_ok=True)    # Database backups (future use)
 
     # Set proper file permissions on critical directories
     set_directory_permissions()
@@ -176,13 +163,29 @@ async def lifespan(app: FastAPI):
     # Start the download queue processor
     download_queue.start_processing()
 
+    # Restore pending downloads from database
+    await download_queue.restore_from_database()
+
     # Start the conversion queue processor
     conversion_queue.start_processing()
+
+    # Restore pending conversions from database
+    await conversion_queue.restore_from_database()
+
+    # Detect hardware and populate cache at startup
+    global hardware_acceleration, hardware_info_cache
+    hardware_info_cache = await collect_hardware_info()
+    hardware_acceleration = hardware_info_cache["acceleration"]
+
+    if hardware_acceleration["detected_encoders"]:
+        await emit_log("INFO", "System", f"Hardware acceleration detected: {', '.join(hardware_acceleration['detected_encoders'])}")
+    else:
+        await emit_log("INFO", "System", "No hardware acceleration detected - using CPU encoding")
 
     # Log startup information for diagnostics
     await emit_log("INFO", "System", "Application started successfully")
     await emit_log("INFO", "System", f"Download queue started (max concurrent: {settings.get('max_concurrent_downloads', 2)})")
-    await emit_log("INFO", "System", f"Conversion queue started (max concurrent: {settings.get('max_concurrent_conversions', 2)})")
+    await emit_log("INFO", "System", f"Conversion queue started (max concurrent: {settings.get('max_concurrent_conversions', 1)})")
     await emit_log("INFO", "System", f"Python version: {os.sys.version}")
     await emit_log("INFO", "System", f"Working directory: {os.getcwd()}")
     await emit_log("INFO", "System", "Log files: rotated daily, kept for 3 days in logs/ directory")
@@ -223,8 +226,7 @@ file_handler = TimedRotatingFileHandler(
     encoding="utf-8"
 )
 file_handler.setFormatter(logging.Formatter(
-    '%(asctime)s - %(levelname)s - [%(component)s] %(message)s',
-    defaults={'component': 'System'}
+    '%(asctime)s - %(levelname)s - %(message)s'
 ))
 
 # Create a separate logger for application logs
@@ -342,8 +344,9 @@ async def trust_proxy_headers(request: Request, call_next):
 # Requests to /assets/* will serve files from the assets directory
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
-# WebSocket connection storage (currently not used, kept for future use)
+# WebSocket connections per download for real-time progress updates
 active_connections: dict[str, list[WebSocket]] = {}
+# WebSocket connections for real-time log streaming
 log_websockets: list[WebSocket] = []
 
 # WebSocket connection limits to prevent memory exhaustion
@@ -483,7 +486,7 @@ async def download_with_timeout(download_id: str, url: str, cookies_file: Option
     """
     Wrapper that adds timeout to download operations.
     Prevents hung downloads from consuming resources indefinitely.
-    
+
     If timeout is exceeded, the download is forcefully terminated.
     """
     try:
@@ -492,9 +495,25 @@ async def download_with_timeout(download_id: str, url: str, cookies_file: Option
             timeout=DOWNLOAD_TIMEOUT_SECONDS
         )
     except asyncio.TimeoutError:
-        await emit_log("ERROR", "Download", f"Download exceeded timeout ({DOWNLOAD_TIMEOUT_SECONDS}s) - terminated", download_id)
-        # The download_video method's exception handler will mark as failed
-        # Any subprocess is already terminated by asyncio.wait_for
+        # Mark download as failed with timeout message
+        timeout_minutes = DOWNLOAD_TIMEOUT_SECONDS / 60
+        error_msg = f"Download exceeded timeout limit ({timeout_minutes:.0f} minutes) and was terminated"
+
+        await emit_log("ERROR", "Download", error_msg, download_id)
+
+        # Update database status to failed
+        with get_db() as db:
+            DatabaseService.mark_failed(db, download_id, error_msg)
+
+        # Broadcast failure to WebSocket clients
+        await YtdlpService.broadcast_progress(download_id, {
+            "type": "failed",
+            "status": "failed",
+            "error": error_msg
+        })
+
+        # Re-raise to let the wrapper handle cleanup
+        raise
 
 
 # Download Queue Manager
@@ -591,6 +610,40 @@ class DownloadQueueManager:
             self.active_downloads.discard(download_id)
             await emit_log("INFO", "Queue", f"Download {download_id[:8]}... finished. Active downloads: {len(self.active_downloads)}", download_id)
 
+    async def restore_from_database(self):
+        """
+        Restore queued and downloading items from database on startup.
+        This allows recovery from application crashes or restarts.
+        """
+        try:
+            with get_db() as db:
+                # Find all downloads that were queued or downloading when app stopped
+                pending_downloads = db.query(Download).filter(
+                    Download.status.in_([DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING])
+                ).order_by(Download.created_at).all()
+
+                if pending_downloads:
+                    await emit_log("INFO", "Queue",
+                                 f"Restoring {len(pending_downloads)} pending download(s) from database")
+
+                    for download in pending_downloads:
+                        # Reset downloading status back to queued
+                        if download.status == DownloadStatus.DOWNLOADING:
+                            download.status = DownloadStatus.QUEUED
+                            download.progress = 0.0
+                            db.commit()
+
+                        # Re-add to queue
+                        await self.add_to_queue(download.id, download.url, download.cookies_file)
+
+                    await emit_log("INFO", "Queue", f"Queue restored with {len(pending_downloads)} download(s)")
+                else:
+                    await emit_log("INFO", "Queue", "No pending downloads to restore")
+
+        except Exception as e:
+            logger.error(f"Failed to restore queue from database: {e}")
+            await emit_log("ERROR", "Queue", f"Failed to restore queue: {str(e)}")
+
     def start_processing(self):
         """
         Start the background queue processor task.
@@ -606,13 +659,15 @@ download_queue = DownloadQueueManager()
 # Conversion Queue Manager
 class ConversionQueueManager:
     """
-    Manages the MP3 conversion queue with concurrent conversion limiting.
+    Manages the conversion queue for both MP3 conversions and video transforms.
     Ensures only a limited number of conversions run simultaneously
     to prevent resource exhaustion.
+    Both job types are processed in FIFO order.
     """
 
     def __init__(self):
         # AsyncIO queue for pending conversions
+        # Items: (job_type, conversion_id, job_params)
         self.queue: asyncio.Queue = asyncio.Queue()
 
         # Set of currently running conversion IDs
@@ -621,30 +676,38 @@ class ConversionQueueManager:
         # Background task that processes the queue
         self.processing_task: Optional[asyncio.Task] = None
 
-    async def add_to_queue(self, conversion_id: str, source_path: str, output_path: str, bitrate: int):
+    async def add_to_queue(self, job_type: str, conversion_id: str, **job_params):
         """
-        Add a conversion to the queue.
-        Conversions are processed in FIFO order when capacity is available.
+        Add a conversion job to the queue.
+        Jobs are processed in FIFO order when capacity is available.
+
+        Args:
+            job_type: Either "mp3" or "video_transform"
+            conversion_id: UUID of the conversion record
+            **job_params: Job-specific parameters
+                For mp3: source_path, output_path, bitrate
+                For video_transform: download_id, source_path, transform_type, internal_filename
         """
-        await self.queue.put((conversion_id, source_path, output_path, bitrate))
+        await self.queue.put((job_type, conversion_id, job_params))
         await emit_log("INFO", "ConversionQueue",
-                     f"Conversion {conversion_id[:8]}... added to queue. Queue size: {self.queue.qsize()}",
+                     f"{job_type.upper()} job {conversion_id[:8]}... added to queue. Queue size: {self.queue.qsize()}",
                      conversion_id)
 
     async def process_queue(self):
         """
         Continuously process conversions from the queue.
+        Handles both MP3 conversions and video transforms.
         Respects max_concurrent_conversions setting and disk space limits.
         This runs as a background task for the entire application lifetime.
         """
         while True:
             try:
-                # Wait for a conversion to be added to the queue (blocking)
-                conversion_id, source_path, output_path, bitrate = await self.queue.get()
+                # Wait for a job to be added to the queue (blocking)
+                job_type, conversion_id, job_params = await self.queue.get()
 
                 # Wait until we have capacity for another conversion
-                # Default to 2 concurrent conversions
-                max_concurrent = settings.get("max_concurrent_conversions", 2)
+                # Default to 1 concurrent conversion (CPU-intensive FFmpeg operations)
+                max_concurrent = settings.get("max_concurrent_conversions", 1)
                 while len(self.active_conversions) >= max_concurrent:
                     await asyncio.sleep(1)
 
@@ -671,11 +734,11 @@ class ConversionQueueManager:
                 # Start the conversion
                 self.active_conversions.add(conversion_id)
                 await emit_log("INFO", "ConversionQueue",
-                             f"Starting conversion {conversion_id[:8]}... ({len(self.active_conversions)}/{max_concurrent} active)",
+                             f"Starting {job_type} job {conversion_id[:8]}... ({len(self.active_conversions)}/{max_concurrent} active)",
                              conversion_id)
 
                 # Create a new async task for the conversion (runs in background)
-                asyncio.create_task(self._conversion_wrapper(conversion_id, source_path, output_path, bitrate))
+                asyncio.create_task(self._job_wrapper(job_type, conversion_id, job_params))
 
                 # Mark this queue item as processed
                 self.queue.task_done()
@@ -685,22 +748,116 @@ class ConversionQueueManager:
                 await emit_log("ERROR", "ConversionQueue", f"Queue processing error: {str(e)}")
                 await asyncio.sleep(1)
 
-    async def _conversion_wrapper(self, conversion_id: str, source_path: str, output_path: str, bitrate: int):
+    async def _job_wrapper(self, job_type: str, conversion_id: str, job_params: dict):
         """
-        Wrapper around the actual conversion function.
-        Ensures the conversion is always removed from active_conversions
-        even if the conversion fails or throws an exception.
+        Wrapper around the actual job processing function.
+        Ensures the job is always removed from active_conversions
+        even if the job fails or throws an exception.
+
+        Args:
+            job_type: Either "mp3" or "video_transform"
+            conversion_id: UUID of the conversion record
+            job_params: Dictionary of job-specific parameters
         """
         try:
-            await ToolConversionService.convert_video_to_mp3(conversion_id, source_path, output_path, bitrate)
+            if job_type == "mp3":
+                # MP3 conversion job
+                await ToolConversionService.convert_video_to_mp3(
+                    conversion_id,
+                    job_params['source_path'],
+                    job_params['output_path'],
+                    job_params['bitrate']
+                )
+            elif job_type == "video_transform":
+                # Video transformation job
+                await VideoTransformService.process_transform(
+                    conversion_id,
+                    job_params['download_id'],
+                    job_params['source_path'],
+                    job_params['transform_type'],
+                    job_params['internal_filename']
+                )
+            else:
+                logger.error(f"Unknown job type: {job_type}")
+                await emit_log("ERROR", "ConversionQueue", f"Unknown job type: {job_type}", conversion_id)
         except Exception as e:
-            logger.error(f"Conversion wrapper error for {conversion_id}: {e}")
+            logger.error(f"Job wrapper error for {conversion_id}: {e}")
         finally:
-            # Always remove from active conversions, even if conversion failed
+            # Always remove from active conversions, even if job failed
             self.active_conversions.discard(conversion_id)
             await emit_log("INFO", "ConversionQueue",
-                         f"Conversion {conversion_id[:8]}... finished. Active conversions: {len(self.active_conversions)}",
+                         f"{job_type.upper()} job {conversion_id[:8]}... finished. Active conversions: {len(self.active_conversions)}",
                          conversion_id)
+
+    async def restore_from_database(self):
+        """
+        Restore queued and converting items from database on startup.
+        This allows recovery from application crashes or restarts.
+        """
+        try:
+            with get_db() as db:
+                # Find all conversions that were queued or converting when app stopped
+                pending_conversions = db.query(ToolConversion).filter(
+                    ToolConversion.status.in_([ConversionStatus.QUEUED, ConversionStatus.CONVERTING])
+                ).order_by(ToolConversion.created_at).all()
+
+                if pending_conversions:
+                    await emit_log("INFO", "ConversionQueue",
+                                 f"Restoring {len(pending_conversions)} pending conversion(s) from database")
+
+                    for conversion in pending_conversions:
+                        # Reset converting status back to queued
+                        if conversion.status == ConversionStatus.CONVERTING:
+                            conversion.status = ConversionStatus.QUEUED
+                            conversion.progress = 0.0
+                            db.commit()
+
+                        # Determine job type and parameters
+                        if conversion.tool_type == "video_to_mp3":
+                            # Find source download
+                            source_download = db.query(Download).filter(
+                                Download.id == conversion.source_download_id
+                            ).first()
+
+                            if source_download:
+                                source_path = os.path.join("downloads", source_download.internal_filename)
+                                output_path = os.path.join("downloads", conversion.internal_output_filename)
+
+                                # Re-add to queue
+                                await self.add_to_queue(
+                                    job_type="mp3",
+                                    conversion_id=conversion.id,
+                                    source_path=source_path,
+                                    output_path=output_path,
+                                    bitrate=conversion.audio_quality or 192
+                                )
+                        elif conversion.tool_type.startswith("video_transform_"):
+                            # Find source download
+                            source_download = db.query(Download).filter(
+                                Download.id == conversion.source_download_id
+                            ).first()
+
+                            if source_download:
+                                source_path = os.path.join("downloads", source_download.internal_filename)
+                                transform_type = conversion.tool_type.replace("video_transform_", "")
+
+                                # Re-add to queue
+                                await self.add_to_queue(
+                                    job_type="video_transform",
+                                    conversion_id=conversion.id,
+                                    download_id=conversion.source_download_id,
+                                    source_path=source_path,
+                                    transform_type=transform_type,
+                                    internal_filename=source_download.internal_filename
+                                )
+
+                    await emit_log("INFO", "ConversionQueue", f"Queue restored with {len(pending_conversions)} conversion(s)")
+                else:
+                    await emit_log("INFO", "ConversionQueue", "No pending conversions to restore")
+
+        except Exception as e:
+            logger.error(f"Failed to restore conversion queue from database: {e}")
+            await emit_log("ERROR", "ConversionQueue", f"Failed to restore queue: {str(e)}")
 
     def start_processing(self):
         """
@@ -713,6 +870,24 @@ class ConversionQueueManager:
 
 # Global conversion queue manager instance
 conversion_queue = ConversionQueueManager()
+
+# Global hardware acceleration cache (detected at startup)
+hardware_acceleration = {
+    "nvenc": False,
+    "amf": False,
+    "qsv": False,
+    "vaapi": False,
+    "videotoolbox": False,
+    "detected_encoders": []
+}
+
+# Global dictionary to track active conversion processes for cancellation
+# Key: conversion_id, Value: (process, temp_output_path)
+active_conversion_processes = {}
+
+# Global cache for all hardware information (populated at startup)
+# Clients fetch this once and cache in browser localStorage
+hardware_info_cache = None
 
 
 # Filename sanitization
@@ -769,6 +944,89 @@ def sanitize_filename(filename: str) -> str:
         base = 'video'
 
     return base + ext
+
+
+async def embed_thumbnail_in_video(video_path: str, thumbnail_path: str, download_id: Optional[str] = None) -> bool:
+    """
+    Embed a thumbnail image into a video file as cover art/poster frame.
+    This allows the thumbnail to be displayed in file explorers and video players.
+
+    Args:
+        video_path: Path to the video file
+        thumbnail_path: Path to the thumbnail image
+        download_id: Optional download ID for logging
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Create a temporary output file path
+        temp_output = f"{video_path}.temp.mp4"
+
+        await emit_log("INFO", "Thumbnail", f"Embedding thumbnail into video: {os.path.basename(video_path)}", download_id)
+
+        # Use ffmpeg to embed the thumbnail as cover art
+        # -i video_path: input video
+        # -i thumbnail_path: input thumbnail
+        # -map 0: map all streams from first input (video)
+        # -map 1: map the thumbnail as an additional stream
+        # -c copy: copy all streams without re-encoding
+        # -c:v:1 mjpeg: encode the thumbnail stream as MJPEG (required for cover art)
+        # -disposition:v:1 attached_pic: mark the thumbnail as an attached picture/cover art
+        embed_process = await asyncio.create_subprocess_exec(
+            'ffmpeg',
+            '-i', video_path,
+            '-i', thumbnail_path,
+            '-map', '0',
+            '-map', '1',
+            '-c', 'copy',
+            '-c:v:1', 'mjpeg',
+            '-disposition:v:1', 'attached_pic',
+            temp_output,
+            '-y',  # Overwrite output file if it exists
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        # Wait for the process to complete with a timeout
+        stdout, stderr = await asyncio.wait_for(embed_process.communicate(), timeout=60)
+
+        # Check if the process was successful
+        if embed_process.returncode == 0 and os.path.exists(temp_output):
+            # Replace the original video with the new one that has the embedded thumbnail
+            os.replace(temp_output, video_path)
+            await emit_log("SUCCESS", "Thumbnail", "Thumbnail successfully embedded into video", download_id)
+            return True
+        else:
+            # Log the error but don't fail the download
+            error_msg = stderr.decode().strip() if stderr else "Unknown error"
+            await emit_log("WARNING", "Thumbnail", f"Failed to embed thumbnail: {error_msg}", download_id)
+            # Clean up temp file if it exists
+            if os.path.exists(temp_output):
+                try:
+                    os.remove(temp_output)
+                except:
+                    pass
+            return False
+
+    except asyncio.TimeoutError:
+        await emit_log("WARNING", "Thumbnail", "Thumbnail embedding timed out after 60 seconds", download_id)
+        # Clean up temp file if it exists
+        if os.path.exists(temp_output):
+            try:
+                os.remove(temp_output)
+            except:
+                pass
+        return False
+    except Exception as e:
+        await emit_log("WARNING", "Thumbnail", f"Thumbnail embedding failed: {str(e)}", download_id)
+        # Clean up temp file if it exists
+        if 'temp_output' in locals() and os.path.exists(temp_output):
+            try:
+                os.remove(temp_output)
+            except:
+                pass
+        return False
 
 
 # Logging system
@@ -879,7 +1137,8 @@ class DownloadResponse(BaseModel):
     thumbnail: Optional[str]                # Thumbnail filename
     file_size: Optional[int]                # Size in bytes
     error_message: Optional[str]            # Error message if failed
-    created_at: datetime
+    created_at: datetime                    # When job was created/queued
+    started_at: Optional[datetime]          # When download actually started
     completed_at: Optional[datetime]        # When download finished
 
 
@@ -900,6 +1159,13 @@ class DiskSpaceInfo(BaseModel):
 class CleanupStats(BaseModel):
     """Statistics from cleanup operation"""
     downloads_removed: int                  # Number of database entries removed
+    files_removed: int                      # Number of files deleted
+    space_freed: int                        # Space freed in bytes
+
+
+class ConversionCleanupStats(BaseModel):
+    """Statistics from conversion cleanup operation"""
+    conversions_removed: int                # Number of conversion entries removed
     files_removed: int                      # Number of files deleted
     space_freed: int                        # Space freed in bytes
 
@@ -995,6 +1261,9 @@ class DatabaseService:
         download = DatabaseService.get_download_by_id(db, download_id)
         if download:
             download.status = status
+            # Set started_at timestamp when download actually begins
+            if status == DownloadStatus.DOWNLOADING and download.started_at is None:
+                download.started_at = datetime.now(timezone.utc)
             db.commit()
 
     @staticmethod
@@ -1282,6 +1551,10 @@ class YtdlpService:
                                 internal_thumbnail_only = thumb_basename
                             break
 
+                    # Embed thumbnail into video if we found one
+                    if thumbnail_display_name and internal_thumbnail_only:
+                        await embed_thumbnail_in_video(internal_path, internal_thumb_path, download_id)
+
                     if not thumbnail_display_name:
                         await emit_log("WARNING", "Download", "No thumbnail found for video", download_id)
 
@@ -1431,6 +1704,9 @@ class ToolConversionService:
                 stderr=asyncio.subprocess.PIPE
             )
 
+            # Register process for cancellation tracking
+            active_conversion_processes[conversion_id] = (process, output_path)
+
             # Parse FFmpeg progress output asynchronously
             stderr_data = b''
             while True:
@@ -1485,6 +1761,13 @@ class ToolConversionService:
                          f"MP3 conversion completed: {output_size} bytes", conversion_id)
 
         except Exception as e:
+            # Clean up output file if it exists
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except:
+                    pass
+
             # Mark conversion as failed
             with get_db() as db:
                 conversion = db.query(ToolConversion).filter(ToolConversion.id == conversion_id).first()
@@ -1495,6 +1778,10 @@ class ToolConversionService:
 
             await emit_log("ERROR", "ToolConversion",
                          f"MP3 conversion failed: {str(e)}", conversion_id)
+        finally:
+            # Always unregister process from tracking
+            if conversion_id in active_conversion_processes:
+                del active_conversion_processes[conversion_id]
 
 
 # Video Transform Service - Handles video flipping and rotation
@@ -1502,15 +1789,15 @@ class VideoTransformService:
     @staticmethod
     async def transform_video(download_id: str, transform_type: str):
         """
-        Apply transformation to video using FFmpeg (in-place).
-        Creates a ToolConversion record to track progress.
+        Queue a video transformation job.
+        Validates inputs, creates a ToolConversion record, and adds to queue.
 
         Args:
             download_id: UUID of the download record
             transform_type: Type of transformation (hflip, vflip, rotate90, rotate180, rotate270)
 
         Returns:
-            dict: Success message, updated file info, and conversion ID
+            ToolConversion: The created conversion record
         """
         # Validate transform type
         valid_transforms = ['hflip', 'vflip', 'rotate90', 'rotate180', 'rotate270']
@@ -1548,6 +1835,38 @@ class VideoTransformService:
             db.commit()
             db.refresh(conversion)
             conversion_id = conversion.id
+
+        await emit_log("INFO", "VideoTransform",
+                     f"Queued {transform_type} transformation for {display_filename}",
+                     conversion_id)
+
+        # Add to conversion queue
+        await conversion_queue.add_to_queue(
+            job_type="video_transform",
+            conversion_id=conversion_id,
+            download_id=download_id,
+            source_path=source_path,
+            transform_type=transform_type,
+            internal_filename=internal_filename
+        )
+
+        # Return conversion record (similar to MP3 endpoint)
+        return conversion
+
+    @staticmethod
+    async def process_transform(conversion_id: str, download_id: str, source_path: str,
+                                transform_type: str, internal_filename: str):
+        """
+        Process a video transformation (called from queue).
+        Applies the transformation using FFmpeg and updates the original file.
+
+        Args:
+            conversion_id: UUID of the conversion record
+            download_id: UUID of the download record
+            source_path: Path to the source video file
+            transform_type: Type of transformation (hflip, vflip, rotate90, rotate180, rotate270)
+            internal_filename: Internal filename of the video
+        """
 
         # Create temp output path
         file_uuid = str(uuid.uuid4())
@@ -1598,17 +1917,69 @@ class VideoTransformService:
             elif transform_type == 'rotate270':
                 vf_filter = "transpose=2"  # 90° counter-clockwise
 
-            # Run FFmpeg transformation with progress output
-            process = await asyncio.create_subprocess_exec(
+            # Select video encoder based on available hardware acceleration
+            video_encoder = 'libx264'  # Default CPU encoder
+            encoder_preset = []  # Additional encoder-specific options
+
+            if hardware_acceleration["nvenc"]:
+                # NVIDIA NVENC - fast GPU encoding
+                video_encoder = 'h264_nvenc'
+                encoder_preset = ['-preset', 'fast']
+                await emit_log("INFO", "VideoTransform", "Using NVIDIA NVENC acceleration", conversion_id)
+            elif hardware_acceleration["amf"]:
+                # AMD AMF - AMD GPU encoding
+                video_encoder = 'h264_amf'
+                encoder_preset = ['-quality', 'balanced']
+                await emit_log("INFO", "VideoTransform", "Using AMD AMF acceleration", conversion_id)
+            elif hardware_acceleration["qsv"]:
+                # Intel Quick Sync Video
+                video_encoder = 'h264_qsv'
+                encoder_preset = ['-preset', 'fast']
+                await emit_log("INFO", "VideoTransform", "Using Intel Quick Sync acceleration", conversion_id)
+            elif hardware_acceleration["vaapi"]:
+                # VAAPI (Linux)
+                video_encoder = 'h264_vaapi'
+                await emit_log("INFO", "VideoTransform", "Using VAAPI acceleration", conversion_id)
+            elif hardware_acceleration["videotoolbox"]:
+                # Apple VideoToolbox (macOS)
+                video_encoder = 'h264_videotoolbox'
+                await emit_log("INFO", "VideoTransform", "Using VideoToolbox acceleration", conversion_id)
+            else:
+                await emit_log("INFO", "VideoTransform", "Using CPU encoding (no hardware acceleration)", conversion_id)
+
+            # Try hardware acceleration first, fall back to CPU if it fails
+            hardware_failed = False
+            using_hardware = video_encoder != 'libx264'
+
+            # Build FFmpeg command with hardware acceleration
+            ffmpeg_cmd = [
                 'ffmpeg', '-y',
                 '-i', source_path,
                 '-vf', vf_filter,
-                '-c:a', 'copy',  # Copy audio without re-encoding
-                '-progress', 'pipe:1',  # Progress to stdout
-                temp_output_path,
+                '-c:v', video_encoder
+            ]
+
+            # Add encoder-specific presets
+            ffmpeg_cmd.extend(encoder_preset)
+
+            # Copy audio without re-encoding
+            ffmpeg_cmd.extend(['-c:a', 'copy'])
+
+            # Progress output
+            ffmpeg_cmd.extend(['-progress', 'pipe:1'])
+
+            # Output file
+            ffmpeg_cmd.append(temp_output_path)
+
+            # Run FFmpeg transformation with progress output
+            process = await asyncio.create_subprocess_exec(
+                *ffmpeg_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
+
+            # Register process for cancellation tracking
+            active_conversion_processes[conversion_id] = (process, temp_output_path)
 
             # Parse FFmpeg progress output asynchronously
             while True:
@@ -1642,6 +2013,76 @@ class VideoTransformService:
             await process.wait()
             stderr_data = await process.stderr.read()
 
+            # If hardware acceleration failed, retry with CPU
+            if process.returncode != 0 and using_hardware:
+                hardware_failed = True
+                await emit_log("WARNING", "VideoTransform",
+                             f"Hardware acceleration failed, retrying with CPU encoding",
+                             conversion_id)
+
+                # Clean up temp file
+                if os.path.exists(temp_output_path):
+                    os.remove(temp_output_path)
+
+                # Rebuild command with CPU encoder
+                ffmpeg_cmd = [
+                    'ffmpeg', '-y',
+                    '-i', source_path,
+                    '-vf', vf_filter,
+                    '-c:v', 'libx264',  # CPU encoder
+                    '-c:a', 'copy',
+                    '-progress', 'pipe:1',
+                    temp_output_path
+                ]
+
+                # Run FFmpeg with CPU encoding
+                process = await asyncio.create_subprocess_exec(
+                    *ffmpeg_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                # Update process tracking
+                active_conversion_processes[conversion_id] = (process, temp_output_path)
+
+                # Reset progress to 0
+                with get_db() as db:
+                    conversion = db.query(ToolConversion).filter(
+                        ToolConversion.id == conversion_id
+                    ).first()
+                    if conversion:
+                        conversion.progress = 0.0
+                        db.commit()
+
+                # Parse progress again
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+
+                    line_str = line.decode().strip()
+
+                    if line_str.startswith('out_time_ms='):
+                        try:
+                            out_time_ms = int(line_str.split('=')[1])
+                            out_time_s = out_time_ms / 1_000_000
+
+                            if total_duration > 0:
+                                progress = min((out_time_s / total_duration) * 100, 99.9)
+
+                                with get_db() as db:
+                                    conversion = db.query(ToolConversion).filter(
+                                        ToolConversion.id == conversion_id
+                                    ).first()
+                                    if conversion:
+                                        conversion.progress = progress
+                                        db.commit()
+                        except (ValueError, IndexError):
+                            pass
+
+                await process.wait()
+                stderr_data = await process.stderr.read()
+
             if process.returncode != 0:
                 raise Exception(f"FFmpeg transformation failed: {stderr_data.decode()}")
 
@@ -1671,13 +2112,6 @@ class VideoTransformService:
                          f"Transformation {transform_type} completed: {new_file_size} bytes",
                          download_id)
 
-            return {
-                "success": True,
-                "message": "Video transformed successfully",
-                "new_file_size": new_file_size,
-                "conversion_id": conversion_id
-            }
-
         except Exception as e:
             # Clean up temp file if it exists
             if os.path.exists(temp_output_path):
@@ -1697,7 +2131,10 @@ class VideoTransformService:
             await emit_log("ERROR", "VideoTransform",
                          f"Transformation {transform_type} failed: {str(e)}",
                          download_id)
-            raise HTTPException(status_code=500, detail=f"Transformation failed: {str(e)}")
+        finally:
+            # Always unregister process from tracking
+            if conversion_id in active_conversion_processes:
+                del active_conversion_processes[conversion_id]
 
 
 # Global exception handler
@@ -1872,6 +2309,9 @@ async def upload_video(
             if not os.path.exists(thumbnail_path) or thumb_process.returncode != 0:
                 internal_thumbnail = None
                 await emit_log("WARNING", "Upload", f"Failed to generate thumbnail for {display_filename}", None)
+            else:
+                # Embed the thumbnail into the video
+                await embed_thumbnail_in_video(file_path, thumbnail_path, None)
         except Exception as e:
             # Thumbnail extraction failed, but upload still succeeds
             internal_thumbnail = None
@@ -2379,6 +2819,154 @@ async def clear_ytdlp_cache():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/settings/cookies")
+async def list_cookie_files():
+    """
+    List all available cookie files in the cookies/ directory.
+    Returns filename, size, and last modified time for each file.
+    """
+    try:
+        cookies_dir = "cookies"
+        if not os.path.exists(cookies_dir):
+            os.makedirs(cookies_dir, mode=0o700, exist_ok=True)
+            return {"cookies": []}
+
+        cookie_files = []
+        for filename in os.listdir(cookies_dir):
+            # Only include .txt files
+            if not filename.endswith('.txt'):
+                continue
+
+            filepath = os.path.join(cookies_dir, filename)
+            if os.path.isfile(filepath):
+                stat_info = os.stat(filepath)
+                cookie_files.append({
+                    "filename": filename,
+                    "size": stat_info.st_size,
+                    "modified": datetime.fromtimestamp(stat_info.st_mtime, tz=timezone.utc).isoformat()
+                })
+
+        # Sort by filename
+        cookie_files.sort(key=lambda x: x['filename'])
+
+        return {"cookies": cookie_files}
+
+    except Exception as e:
+        await emit_log("ERROR", "Settings", f"Failed to list cookie files: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/settings/cookies/upload")
+async def upload_cookie_file(
+    file: UploadFile = File(...),
+    http_request: Request = None
+):
+    """
+    Upload a cookie file for authenticated downloads.
+    Validates file size (max 100KB) and file type (.txt only).
+    """
+    # Get client IP for logging
+    client_ip = getattr(http_request.state, 'client_ip', 'unknown') if http_request else 'unknown'
+
+    # Validate filename
+    if not file.filename or '..' in file.filename or '/' in file.filename or '\\' in file.filename:
+        await emit_log("WARNING", "Cookies", f"Suspicious filename rejected from {client_ip}")
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # Validate file extension (only .txt files)
+    if not file.filename.endswith('.txt'):
+        await emit_log("WARNING", "Cookies", f"Invalid file type rejected: {file.filename} from {client_ip}")
+        raise HTTPException(status_code=400, detail="Only .txt files are allowed for cookies")
+
+    # Validate filename using security module
+    if not validate_cookie_filename(file.filename):
+        await emit_log("WARNING", "Cookies", f"Invalid cookie filename: {file.filename} from {client_ip}")
+        raise HTTPException(status_code=400, detail="Invalid cookie filename. Only alphanumeric characters, hyphens, underscores, and dots allowed.")
+
+    # Validate file size (max 5KB)
+    MAX_SIZE = 5 * 1024  # 5KB in bytes
+
+    try:
+        # Read the file content
+        content = await file.read()
+
+        if len(content) > MAX_SIZE:
+            await emit_log("WARNING", "Cookies", f"Cookie file too large rejected from {client_ip}: {len(content)} bytes")
+            raise HTTPException(
+                status_code=413,
+                detail=f"Cookie file too large. Maximum size is 5KB, file is {len(content) / 1024:.1f}KB"
+            )
+
+        # Ensure cookies directory exists
+        cookies_dir = "cookies"
+        if not os.path.exists(cookies_dir):
+            os.makedirs(cookies_dir, mode=0o700, exist_ok=True)
+
+        # Save the file
+        filepath = os.path.join(cookies_dir, file.filename)
+        with open(filepath, "wb") as f:
+            f.write(content)
+
+        # Set restrictive permissions (owner read/write only)
+        os.chmod(filepath, 0o600)
+
+        await emit_log("SUCCESS", "Cookies", f"Cookie file uploaded from {client_ip}: {file.filename} ({len(content)} bytes)")
+
+        return {
+            "message": f"Cookie file '{file.filename}' uploaded successfully",
+            "filename": file.filename,
+            "size": len(content)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await emit_log("ERROR", "Cookies", f"Failed to upload cookie file from {client_ip}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload cookie file: {str(e)}")
+
+
+@app.delete("/api/settings/cookies/{filename}")
+async def delete_cookie_file(filename: str, http_request: Request = None):
+    """
+    Delete a cookie file from the cookies/ directory.
+    Validates filename to prevent path traversal attacks.
+    """
+    # Get client IP for logging
+    client_ip = getattr(http_request.state, 'client_ip', 'unknown') if http_request else 'unknown'
+
+    # Validate filename
+    if '..' in filename or '/' in filename or '\\' in filename:
+        await emit_log("WARNING", "Cookies", f"Path traversal attempt from {client_ip}: {filename}")
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not filename.endswith('.txt'):
+        await emit_log("WARNING", "Cookies", f"Invalid file type deletion attempt from {client_ip}: {filename}")
+        raise HTTPException(status_code=400, detail="Invalid file type")
+
+    if not validate_cookie_filename(filename):
+        await emit_log("WARNING", "Cookies", f"Invalid cookie filename deletion attempt from {client_ip}: {filename}")
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    try:
+        filepath = os.path.join("cookies", filename)
+
+        if not os.path.exists(filepath):
+            raise HTTPException(status_code=404, detail="Cookie file not found")
+
+        # Delete the file
+        os.remove(filepath)
+
+        await emit_log("SUCCESS", "Cookies", f"Cookie file deleted by {client_ip}: {filename}")
+
+        return {"message": f"Cookie file '{filename}' deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await emit_log("ERROR", "Cookies", f"Failed to delete cookie file from {client_ip}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete cookie file: {str(e)}")
+
+
 @app.get("/api/files/thumbnail/{download_id}")
 async def get_thumbnail(download_id: str, db: Session = Depends(get_db_session)):
     """Serve thumbnail images using download ID"""
@@ -2730,10 +3318,11 @@ async def convert_video_to_mp3(request: VideoToMp3Request, db: Session = Depends
 
         # Add to conversion queue
         await conversion_queue.add_to_queue(
-            conversion.id,
-            source_path,
-            output_path,
-            request.audio_quality
+            job_type="mp3",
+            conversion_id=conversion.id,
+            source_path=source_path,
+            output_path=output_path,
+            bitrate=request.audio_quality
         )
 
         return conversion
@@ -2830,6 +3419,81 @@ async def delete_conversion(conversion_id: str, db: Session = Depends(get_db_ses
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/tools/conversions/{conversion_id}/cancel")
+async def cancel_conversion(conversion_id: str, db: Session = Depends(get_db_session)):
+    """
+    Cancel an active conversion job.
+    Kills the FFmpeg process, cleans up partial files, and marks as failed.
+    """
+    try:
+        conversion = db.query(ToolConversion).filter(ToolConversion.id == conversion_id).first()
+        if not conversion:
+            raise HTTPException(status_code=404, detail="Conversion not found")
+
+        # Check if conversion is actually active
+        if conversion.status not in [ConversionStatus.QUEUED, ConversionStatus.CONVERTING]:
+            raise HTTPException(status_code=400, detail="Conversion is not active")
+
+        # Check if process is currently running
+        if conversion_id in active_conversion_processes:
+            process, temp_file_path = active_conversion_processes[conversion_id]
+
+            # Kill the FFmpeg process
+            try:
+                process.terminate()
+                # Wait briefly for graceful termination
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=3)
+                except asyncio.TimeoutError:
+                    # Force kill if it doesn't terminate gracefully
+                    process.kill()
+                    await process.wait()
+
+                await emit_log("INFO", "ConversionQueue",
+                             f"Killed FFmpeg process for conversion {conversion_id[:8]}...",
+                             conversion_id)
+            except Exception as e:
+                await emit_log("WARNING", "ConversionQueue",
+                             f"Error killing process: {str(e)}",
+                             conversion_id)
+
+            # Clean up temporary/partial files
+            if os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                    await emit_log("INFO", "ConversionQueue",
+                                 f"Removed partial file: {temp_file_path}",
+                                 conversion_id)
+                except Exception as e:
+                    await emit_log("WARNING", "ConversionQueue",
+                                 f"Failed to remove partial file: {str(e)}",
+                                 conversion_id)
+
+            # Remove from active processes tracking
+            del active_conversion_processes[conversion_id]
+
+        # Mark conversion as failed in database
+        conversion.status = ConversionStatus.FAILED
+        conversion.error_message = "Cancelled by user"
+        conversion.completed_at = datetime.now(timezone.utc)
+        db.commit()
+
+        await emit_log("INFO", "ConversionQueue",
+                     f"Conversion cancelled by user: {conversion.output_filename}",
+                     conversion_id)
+
+        return {
+            "message": "Conversion cancelled successfully",
+            "conversion_id": conversion_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await emit_log("ERROR", "ConversionQueue", f"Failed to cancel conversion: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/tools/audio/{conversion_id}")
 async def download_audio(conversion_id: str, db: Session = Depends(get_db_session)):
     """
@@ -2868,23 +3532,94 @@ async def download_audio(conversion_id: str, db: Session = Depends(get_db_sessio
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/tools/conversions/cleanup", response_model=ConversionCleanupStats)
+async def cleanup_stale_conversions(hours: int = 1, db: Session = Depends(get_db_session)):
+    """
+    Clean up stale conversions that have been stuck in queued or converting state
+    for longer than the specified number of hours.
+    """
+    try:
+        await emit_log("INFO", "Cleanup", f"Starting cleanup of stale conversions older than {hours} hour(s)")
+
+        # Calculate cutoff time
+        from datetime import datetime, timezone, timedelta
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Find stale conversions (stuck in queued or converting state)
+        stale_conversions = db.query(ToolConversion).filter(
+            ToolConversion.status.in_([ConversionStatus.QUEUED, ConversionStatus.CONVERTING]),
+            ToolConversion.created_at < cutoff_time
+        ).all()
+
+        conversions_removed = 0
+        files_removed = 0
+        space_freed = 0
+
+        await emit_log("INFO", "Cleanup", f"Found {len(stale_conversions)} stale conversions to clean up")
+
+        for conversion in stale_conversions:
+            display_name = conversion.output_filename or "unknown"
+
+            # Delete output file if it exists
+            if conversion.internal_output_filename:
+                output_path = os.path.join("downloads", conversion.internal_output_filename)
+                if os.path.exists(output_path):
+                    try:
+                        size = os.path.getsize(output_path)
+                        os.remove(output_path)
+                        space_freed += size
+                        files_removed += 1
+                        await emit_log("INFO", "Cleanup",
+                                     f"Removed stale conversion file: {display_name} ({size} bytes)",
+                                     conversion.id)
+                    except Exception as e:
+                        await emit_log("ERROR", "Cleanup",
+                                     f"Failed to remove file {display_name}: {str(e)}",
+                                     conversion.id)
+
+            # Delete database record
+            db.delete(conversion)
+            conversions_removed += 1
+            await emit_log("INFO", "Cleanup",
+                         f"Removed stale conversion record: {display_name} (stuck in {conversion.status})",
+                         conversion.id)
+
+        db.commit()
+
+        await emit_log("SUCCESS", "Cleanup",
+                     f"Cleanup complete: removed {conversions_removed} conversions, "
+                     f"{files_removed} files, freed {space_freed} bytes")
+
+        return ConversionCleanupStats(
+            conversions_removed=conversions_removed,
+            files_removed=files_removed,
+            space_freed=space_freed
+        )
+
+    except Exception as e:
+        await emit_log("ERROR", "Cleanup", f"Failed to cleanup stale conversions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/tools/transform")
 async def transform_video(request: VideoTransformRequest):
     """
-    Apply a transformation to a video (flip or rotate).
-    This modifies the original video file in-place.
+    Queue a video transformation (flip or rotate).
+    Creates a ToolConversion record and adds to processing queue.
+    The transformation modifies the original video file in-place.
+    Returns immediately with the conversion record - actual processing happens in background.
     """
     try:
-        result = await VideoTransformService.transform_video(
+        conversion = await VideoTransformService.transform_video(
             request.download_id,
             request.transform_type
         )
-        return result
+        return conversion
 
     except HTTPException:
         raise
     except Exception as e:
-        await emit_log("ERROR", "VideoTransform", f"Failed to transform video: {str(e)}")
+        await emit_log("ERROR", "VideoTransform", f"Failed to queue video transformation: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2909,6 +3644,272 @@ def update_compression_stats(ratio: float):
 
     except Exception:
         pass  # Don't fail the download if stats update fails
+
+
+# Hardware Information Detection
+def get_cpu_info():
+    """Get CPU information"""
+    try:
+        cpu_info = {
+            "model": platform.processor() or "Unknown",
+            "architecture": platform.machine(),
+            "cores": os.cpu_count() or 1
+        }
+
+        # Try to get more detailed CPU info on Linux
+        if os.path.exists("/proc/cpuinfo"):
+            try:
+                with open("/proc/cpuinfo", "r") as f:
+                    cpuinfo = f.read()
+                    # Extract model name
+                    model_match = re.search(r"model name\s*:\s*(.+)", cpuinfo)
+                    if model_match:
+                        cpu_info["model"] = model_match.group(1).strip()
+            except:
+                pass
+
+        return cpu_info
+    except Exception as e:
+        logger.error(f"Failed to get CPU info: {e}")
+        return {"model": "Unknown", "architecture": "Unknown", "cores": 1}
+
+
+def get_memory_info():
+    """Get memory information in MB"""
+    try:
+        # Try Linux /proc/meminfo first
+        if os.path.exists("/proc/meminfo"):
+            with open("/proc/meminfo", "r") as f:
+                meminfo = f.read()
+
+                # Extract total and available memory
+                total_match = re.search(r"MemTotal:\s+(\d+)\s+kB", meminfo)
+                available_match = re.search(r"MemAvailable:\s+(\d+)\s+kB", meminfo)
+
+                if total_match:
+                    total_mb = int(total_match.group(1)) / 1024
+                    available_mb = int(available_match.group(1)) / 1024 if available_match else 0
+                    used_mb = total_mb - available_mb
+
+                    return {
+                        "total_mb": round(total_mb, 2),
+                        "used_mb": round(used_mb, 2),
+                        "available_mb": round(available_mb, 2),
+                        "usage_percent": round((used_mb / total_mb) * 100, 1) if total_mb > 0 else 0
+                    }
+
+        # Fallback - return basic info
+        return {
+            "total_mb": 0,
+            "used_mb": 0,
+            "available_mb": 0,
+            "usage_percent": 0
+        }
+    except Exception as e:
+        logger.error(f"Failed to get memory info: {e}")
+        return {"total_mb": 0, "used_mb": 0, "available_mb": 0, "usage_percent": 0}
+
+
+def get_disk_info():
+    """Get disk information for downloads directory"""
+    try:
+        disk_usage = shutil.disk_usage("downloads")
+        total_gb = disk_usage.total / (1024 ** 3)
+        used_gb = disk_usage.used / (1024 ** 3)
+        free_gb = disk_usage.free / (1024 ** 3)
+
+        return {
+            "total_gb": round(total_gb, 2),
+            "used_gb": round(used_gb, 2),
+            "free_gb": round(free_gb, 2),
+            "usage_percent": round((used_gb / total_gb) * 100, 1) if total_gb > 0 else 0
+        }
+    except Exception as e:
+        logger.error(f"Failed to get disk info: {e}")
+        return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "usage_percent": 0}
+
+
+def get_network_info():
+    """Get network interface information"""
+    try:
+        interfaces = []
+
+        # Try Linux /sys/class/net
+        if os.path.exists("/sys/class/net"):
+            net_dir = "/sys/class/net"
+            for iface in os.listdir(net_dir):
+                # Skip loopback
+                if iface == "lo":
+                    continue
+
+                iface_info = {"name": iface}
+
+                # Get MAC address
+                mac_file = os.path.join(net_dir, iface, "address")
+                if os.path.exists(mac_file):
+                    with open(mac_file, "r") as f:
+                        iface_info["mac"] = f.read().strip()
+
+                # Get interface state
+                state_file = os.path.join(net_dir, iface, "operstate")
+                if os.path.exists(state_file):
+                    with open(state_file, "r") as f:
+                        iface_info["state"] = f.read().strip()
+
+                # Get speed if available
+                speed_file = os.path.join(net_dir, iface, "speed")
+                if os.path.exists(speed_file):
+                    try:
+                        with open(speed_file, "r") as f:
+                            speed = f.read().strip()
+                            if speed != "-1":
+                                iface_info["speed_mbps"] = int(speed)
+                    except:
+                        pass
+
+                interfaces.append(iface_info)
+
+        return interfaces
+    except Exception as e:
+        logger.error(f"Failed to get network info: {e}")
+        return []
+
+
+async def detect_hardware_acceleration():
+    """
+    Detect available hardware acceleration for FFmpeg.
+    Checks for NVIDIA NVENC, AMD AMF, Intel Quick Sync (QSV), and VAAPI.
+    """
+    acceleration = {
+        "nvenc": False,      # NVIDIA GPU encoding
+        "amf": False,        # AMD GPU encoding
+        "qsv": False,        # Intel Quick Sync Video
+        "vaapi": False,      # Video Acceleration API (Linux)
+        "videotoolbox": False,  # Apple VideoToolbox (macOS)
+        "detected_encoders": []
+    }
+
+    try:
+        # Run ffmpeg -encoders to get list of available encoders
+        process = await asyncio.create_subprocess_exec(
+            'ffmpeg', '-hide_banner', '-encoders',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+        encoders_output = stdout.decode()
+
+        # Check for hardware acceleration encoder support
+        detected = []
+
+        # NVIDIA NVENC (h264_nvenc, hevc_nvenc)
+        if 'h264_nvenc' in encoders_output or 'hevc_nvenc' in encoders_output:
+            acceleration["nvenc"] = True
+            detected.append("NVIDIA NVENC")
+
+        # AMD AMF (h264_amf, hevc_amf)
+        if 'h264_amf' in encoders_output or 'hevc_amf' in encoders_output:
+            acceleration["amf"] = True
+            detected.append("AMD AMF")
+
+        # Intel Quick Sync (h264_qsv, hevc_qsv)
+        if 'h264_qsv' in encoders_output or 'hevc_qsv' in encoders_output:
+            acceleration["qsv"] = True
+            detected.append("Intel Quick Sync")
+
+        # VAAPI (h264_vaapi, hevc_vaapi)
+        if 'h264_vaapi' in encoders_output or 'hevc_vaapi' in encoders_output:
+            acceleration["vaapi"] = True
+            detected.append("VAAPI")
+
+        # VideoToolbox (h264_videotoolbox, hevc_videotoolbox)
+        if 'h264_videotoolbox' in encoders_output or 'hevc_videotoolbox' in encoders_output:
+            acceleration["videotoolbox"] = True
+            detected.append("VideoToolbox")
+
+        acceleration["detected_encoders"] = detected
+
+    except Exception as e:
+        logger.error(f"Failed to detect hardware acceleration: {e}")
+
+    return acceleration
+
+
+async def collect_hardware_info():
+    """
+    Collect all hardware information for caching.
+    This is called at startup and when the user clicks refresh.
+    Returns a complete hardware info dict that clients cache in localStorage.
+    """
+    try:
+        cpu_info = get_cpu_info()
+        memory_info = get_memory_info()
+        disk_info = get_disk_info()
+        network_info = get_network_info()
+
+        # Use the global hardware_acceleration if already detected, otherwise detect
+        global hardware_acceleration
+        if hardware_acceleration.get("detected_encoders"):
+            acceleration = hardware_acceleration
+        else:
+            acceleration = await detect_hardware_acceleration()
+
+        return {
+            "cpu": cpu_info,
+            "memory": memory_info,
+            "disk": disk_info,
+            "network": network_info,
+            "acceleration": acceleration,
+            "platform": {
+                "system": platform.system(),
+                "release": platform.release(),
+                "version": platform.version()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to collect hardware info: {e}")
+        raise
+
+
+@app.get("/api/hardware/info")
+async def get_hardware_info():
+    """
+    Get server hardware information (returns cached data).
+    Cache is populated at startup and refreshed via POST /api/hardware/refresh.
+    Clients should cache this in localStorage and only fetch once per session.
+    """
+    global hardware_info_cache
+
+    # If cache is empty (shouldn't happen after startup), populate it
+    if hardware_info_cache is None:
+        hardware_info_cache = await collect_hardware_info()
+
+    return hardware_info_cache
+
+
+@app.post("/api/hardware/refresh")
+async def refresh_hardware_info():
+    """
+    Refresh hardware information cache.
+    Called when user clicks the "Refresh Hardware Info" button.
+    Re-detects all hardware and updates the server cache.
+    """
+    global hardware_info_cache, hardware_acceleration
+
+    try:
+        # Re-detect everything
+        hardware_info_cache = await collect_hardware_info()
+
+        # Update the global acceleration cache for FFmpeg
+        hardware_acceleration = hardware_info_cache["acceleration"]
+
+        await emit_log("INFO", "System", "Hardware information refreshed")
+
+        return hardware_info_cache
+    except Exception as e:
+        logger.error(f"Failed to refresh hardware info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

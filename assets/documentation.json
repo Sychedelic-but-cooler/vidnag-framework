@@ -1,0 +1,249 @@
+{
+  "shortcuts": [
+    {
+      "id": "tab-navigation",
+      "title": "Tab",
+      "summary": "Navigate between interactive elements",
+      "detail": {
+        "title": "Tab Navigation",
+        "description": "Use the Tab key to move focus between interactive elements on the page.",
+        "sections": [
+          {
+            "heading": "How it works",
+            "content": "Pressing Tab moves forward through buttons, links, and form fields. Hold Shift and press Tab to move backwards."
+          },
+          {
+            "heading": "Best used for",
+            "content": "Navigating forms, jumping to action buttons, and accessing controls without a mouse."
+          }
+        ]
+      }
+    },
+    {
+      "id": "arrow-keys",
+      "title": "Arrow Keys",
+      "summary": "Switch between tabs (when tab is focused)",
+      "detail": {
+        "title": "Arrow Key Navigation",
+        "description": "Use arrow keys to switch between tabs when accessibility mode is enabled.",
+        "sections": [
+          {
+            "heading": "How it works",
+            "content": "When a tab button has focus, press Left/Right arrow keys to move between tabs. The selected tab will automatically activate."
+          },
+          {
+            "heading": "Enabling this feature",
+            "content": "Go to Settings → Preferences and enable 'Enhanced Accessibility' to unlock arrow key navigation."
+          }
+        ]
+      }
+    },
+    {
+      "id": "home-end",
+      "title": "Home / End",
+      "summary": "Jump to first/last tab",
+      "detail": {
+        "title": "Quick Tab Jumping",
+        "description": "Quickly jump to the first or last tab in the navigation.",
+        "sections": [
+          {
+            "heading": "How it works",
+            "content": "Press Home to jump to the first tab (Downloads), or End to jump to the last tab (Logs)."
+          }
+        ]
+      }
+    },
+    {
+      "id": "escape",
+      "title": "Esc",
+      "summary": "Close modal windows",
+      "detail": {
+        "title": "Escape Key",
+        "description": "Close any open modal window or dialog with the Escape key.",
+        "sections": [
+          {
+            "heading": "Works with",
+            "content": "Video player, help modal, duplicate detection dialogs, and cookie upload modal."
+          }
+        ]
+      }
+    },
+    {
+      "id": "space-enter",
+      "title": "Space / Enter",
+      "summary": "Activate focused button or link",
+      "detail": {
+        "title": "Button Activation",
+        "description": "Activate buttons and links using keyboard.",
+        "sections": [
+          {
+            "heading": "How it works",
+            "content": "When a button or link has focus (shown by an outline), press Space or Enter to activate it."
+          }
+        ]
+      }
+    }
+  ],
+  "tips": [
+    {
+      "id": "bulk-download",
+      "title": "Bulk Download",
+      "summary": "Select multiple files in the Browse Files tab and click \"Download as ZIP\" to get them all in one archive.",
+      "detail": {
+        "title": "Bulk Download with ZIP Archives",
+        "description": "Download multiple videos at once in a single ZIP file.",
+        "sections": [
+          {
+            "heading": "How to use",
+            "content": "1. Go to the Browse Files tab\n2. Check the boxes next to videos you want\n3. Click 'Download as ZIP' button\n4. Your browser will download a single ZIP file containing all selected videos"
+          },
+          {
+            "heading": "Tips",
+            "content": "This is great for downloading an entire collection or backing up multiple videos at once. The ZIP file will preserve original filenames."
+          }
+        ]
+      }
+    },
+    {
+      "id": "copy-urls",
+      "title": "Copy URLs",
+      "summary": "Click on a domain name in the Download History to copy the original video URL to your clipboard.",
+      "detail": {
+        "title": "Quick URL Copying",
+        "description": "Copy original video URLs with a single click.",
+        "sections": [
+          {
+            "heading": "How to use",
+            "content": "In the Download History section, click on the colored domain badge (e.g., 'youtube.com', 'instagram.com'). The full URL is instantly copied to your clipboard."
+          },
+          {
+            "heading": "Why it's useful",
+            "content": "Share URLs with friends, re-download from a different source, or keep a record of your downloaded content."
+          }
+        ]
+      }
+    },
+    {
+      "id": "retry-failed",
+      "title": "Retry Failed Downloads",
+      "summary": "Failed downloads show a \"Retry\" button - click it to automatically fill the form with that URL.",
+      "detail": {
+        "title": "Retry Failed Downloads",
+        "description": "Quickly retry downloads that failed due to network issues or other problems.",
+        "sections": [
+          {
+            "heading": "How to use",
+            "content": "1. Find a failed download in Download History\n2. Click the 'Retry' button\n3. The download form will automatically fill with the URL\n4. Click 'Start Download' to try again"
+          },
+          {
+            "heading": "Common causes of failures",
+            "content": "Network timeouts, rate limiting, authentication required (try adding a cookie file), or the video was removed."
+          }
+        ]
+      }
+    },
+    {
+      "id": "tools-shortcut",
+      "title": "Tools Shortcut",
+      "summary": "In the Browse Files tab, click the \"Tools\" button on any video to quickly jump to the Tools tab with that video preselected.",
+      "detail": {
+        "title": "Quick Tools Access",
+        "description": "Jump directly from a file to the Tools tab with that video preselected.",
+        "sections": [
+          {
+            "heading": "How to use",
+            "content": "1. Go to Browse Files tab\n2. Find the video you want to process\n3. Click the 'Tools' button next to it\n4. You'll be taken to the Tools tab with that video already selected"
+          },
+          {
+            "heading": "What you can do",
+            "content": "Convert videos to MP3, flip them horizontally/vertically, or rotate them 90/180/270 degrees."
+          }
+        ]
+      }
+    },
+    {
+      "id": "auto-cookie",
+      "title": "Auto-Cookie Selection",
+      "summary": "Enable \"Auto-Select Cookies\" in Preferences to automatically match cookie files to video platforms.",
+      "detail": {
+        "title": "Automatic Cookie Matching",
+        "description": "Automatically select the right cookie file based on the URL you're downloading.",
+        "sections": [
+          {
+            "heading": "How it works",
+            "content": "When you paste a URL, the system detects the domain (e.g., 'instagram.com') and automatically selects the matching cookie file (e.g., 'instagram.txt')."
+          },
+          {
+            "heading": "Setting it up",
+            "content": "1. Upload cookie files in Settings → Cookie Files\n2. Name them after the site (e.g., 'instagram.txt', 'youtube.txt')\n3. Enable 'Auto-Select Cookies' in Settings → Preferences\n4. The system will now auto-match cookies to URLs"
+          },
+          {
+            "heading": "Why use cookies",
+            "content": "Many sites require authentication to download private or age-restricted content. Cookie files let you download content as if you were logged in."
+          }
+        ]
+      }
+    },
+    {
+      "id": "duplicate-detection",
+      "title": "Duplicate Detection",
+      "summary": "The system checks if you've already downloaded a URL and gives you options to skip duplicates or re-download.",
+      "detail": {
+        "title": "Smart Duplicate Detection",
+        "description": "Avoid downloading the same video twice with built-in duplicate detection.",
+        "sections": [
+          {
+            "heading": "How it works",
+            "content": "When you submit a download, the system checks if you've already downloaded that URL. If found, you'll see a dialog with options to skip or re-download."
+          },
+          {
+            "heading": "Your options",
+            "content": "• Skip: Don't download again\n• Re-download: Download a fresh copy\n• View existing: Jump to Browse Files tab to see the existing file"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cancel-jobs",
+      "title": "Cancel Active Jobs",
+      "summary": "Click the \"✕ Cancel\" button on any active conversion to stop it and clean up partial files.",
+      "detail": {
+        "title": "Canceling Active Operations",
+        "description": "Stop conversions or transformations in progress and clean up partial files.",
+        "sections": [
+          {
+            "heading": "How to use",
+            "content": "In the Tools tab under 'Active Operations', click the '✕ Cancel' button next to any running job. The operation will stop and partial files will be cleaned up."
+          },
+          {
+            "heading": "What happens",
+            "content": "The FFmpeg process is terminated, the job is marked as failed, and any partially-created files are automatically deleted."
+          }
+        ]
+      }
+    },
+    {
+      "id": "hardware-acceleration",
+      "title": "Hardware Acceleration",
+      "summary": "Check the Hardware Information section in Settings to see if your system has GPU acceleration available for faster video processing.",
+      "detail": {
+        "title": "GPU Hardware Acceleration",
+        "description": "Use your GPU to process videos much faster than CPU alone.",
+        "sections": [
+          {
+            "heading": "Checking your system",
+            "content": "Go to Settings → Hardware Information to see detected acceleration technologies:\n• NVENC (NVIDIA GPUs)\n• AMF (AMD GPUs)\n• QSV (Intel Quick Sync)\n• VideoToolbox (macOS)\n• VAAPI (Linux)"
+          },
+          {
+            "heading": "How it helps",
+            "content": "GPU acceleration can make video transformations 5-10x faster. The system will automatically use GPU encoding when available and fall back to CPU if needed."
+          },
+          {
+            "heading": "Troubleshooting",
+            "content": "If acceleration is detected but jobs fail, the system will automatically retry with CPU encoding. Check the Logs tab for details."
+          }
+        ]
+      }
+    }
+  ]
+}

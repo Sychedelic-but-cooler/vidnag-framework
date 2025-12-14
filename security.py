@@ -118,31 +118,15 @@ def validate_url(url: str) -> tuple[bool, Optional[str]]:
         return False, "URL must have a valid domain"
 
     # Block local and private network addresses to prevent SSRF attacks
-    # This stops attackers from making the server access internal resources
     localhost_patterns = [
-        'localhost',      # Standard localhost name
-        '127.',           # Loopback addresses (127.0.0.0/8)
-        '0.0.0.0',        # All interfaces binding
-        '10.',            # Private network (10.0.0.0/8)
-        '172.16.',        # Private network range start (172.16.0.0/12)
-        '172.17.',        # Continue through the 172.16.0.0/12 range
-        '172.18.',
-        '172.19.',
-        '172.20.',
-        '172.21.',
-        '172.22.',
-        '172.23.',
-        '172.24.',
-        '172.25.',
-        '172.26.',
-        '172.27.',
-        '172.28.',
-        '172.29.',
-        '172.30.',
-        '172.31.',        # Private network range end
-        '192.168.',       # Private network (192.168.0.0/16)
-        '[::1]',          # IPv6 localhost
-        '[::]',           # IPv6 all interfaces
+        'localhost', '127.', '0.0.0.0',  # Localhost
+        '10.',  # Private network (10.0.0.0/8)
+        '172.16.', '172.17.', '172.18.', '172.19.',  # Private network (172.16.0.0/12)
+        '172.20.', '172.21.', '172.22.', '172.23.',
+        '172.24.', '172.25.', '172.26.', '172.27.',
+        '172.28.', '172.29.', '172.30.', '172.31.',
+        '192.168.',  # Private network (192.168.0.0/16)
+        '[::1]', '[::]',  # IPv6 localhost and all interfaces
     ]
 
     # Extract just the hostname part (remove port if present)
@@ -231,7 +215,7 @@ def validate_settings_update(updates: dict) -> tuple[bool, Optional[str]]:
     """
     # Whitelist of settings that users can modify through the API
     # Internal settings like zip_compression_samples are not included
-    allowed_keys = ['max_concurrent_downloads', 'max_download_speed', 'min_disk_space_mb']
+    allowed_keys = ['max_concurrent_downloads', 'max_concurrent_conversions', 'max_download_speed', 'min_disk_space_mb']
 
     for key in updates.keys():
         if key not in allowed_keys:
@@ -243,6 +227,13 @@ def validate_settings_update(updates: dict) -> tuple[bool, Optional[str]]:
         value = updates["max_concurrent_downloads"]
         if not isinstance(value, int) or value < 1 or value > 10:
             return False, "max_concurrent_downloads must be between 1 and 10"
+
+    # Validate concurrent conversions limit
+    # Between 1-5 to prevent resource exhaustion (conversions are CPU-intensive)
+    if "max_concurrent_conversions" in updates:
+        value = updates["max_concurrent_conversions"]
+        if not isinstance(value, int) or value < 1 or value > 5:
+            return False, "max_concurrent_conversions must be between 1 and 5"
 
     # Validate download speed limit
     # 0 = unlimited, max 1000 MiB/s to prevent unrealistic values
