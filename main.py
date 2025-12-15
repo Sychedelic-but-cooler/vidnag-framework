@@ -1,5 +1,5 @@
 """
-Video Downloader API - Main Application
+Vidnag Framework - Main Application
 A FastAPI-based web application for downloading videos using yt-dlp.
 Provides a web interface for managing video downloads with queue management,
 file browsing, and comprehensive logging.
@@ -198,7 +198,7 @@ async def lifespan(app: FastAPI):
     pass
 
 # Create the FastAPI application instance with our lifespan handler
-app = FastAPI(title="Video Downloader API", lifespan=lifespan)
+app = FastAPI(title="Vidnag Framework API", lifespan=lifespan)
 
 # Configure Python's built-in logging system
 # This sets up console logging for debugging
@@ -2654,7 +2654,7 @@ async def get_version():
 
     return VersionInfo(
         ytdlp_version=ytdlp_version,
-        app_version="1.0.0"
+        app_version="1.4.0-12"
     )
 
 
@@ -2725,16 +2725,17 @@ async def update_ytdlp():
     Update yt-dlp to the latest version
 
     WARNING: This endpoint is disabled by default for security reasons.
-    To enable, set ALLOW_YTDLP_UPDATE=true environment variable.
+    To enable, set allow_ytdlp_update to true in admin_settings.json.
     """
     # Security: Disable dangerous system package updates by default
-    allow_update = os.environ.get("ALLOW_YTDLP_UPDATE", "false").lower() == "true"
+    admin_settings = get_admin_settings()
+    allow_update = admin_settings.security.allow_ytdlp_update
 
     if not allow_update:
         await emit_log("WARNING", "Settings", "yt-dlp update blocked - feature disabled for security")
         raise HTTPException(
             status_code=403,
-            detail="yt-dlp updates are disabled for security. Set ALLOW_YTDLP_UPDATE=true to enable."
+            detail="yt-dlp updates are disabled for security. Please contact your administrator to enable this feature."
         )
 
     try:

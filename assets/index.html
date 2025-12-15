@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YT-DLP WebUI</title>
+    <title>Vidnag Framework</title>
     <link rel="icon" type="image/png" href="/assets/logo.png">
     <link rel="stylesheet" href="/assets/styles.css">
 </head>
@@ -11,18 +11,18 @@
     <div class="container">
         <header>
             <div class="header-content">
-                <img src="/assets/logo.svg" alt="YT-DLP Logo" class="logo logo-svg" onerror="this.onerror=null; this.src='/assets/logo.png'; this.classList.remove('logo-svg');">
+                <img src="/assets/logo.svg" alt="Vidnag Framework Logo" class="logo logo-svg" onerror="this.onerror=null; this.src='/assets/logo.png'; this.classList.remove('logo-svg');">
                 <div class="header-text">
-                    <h1>YT-DLP WebUI</h1>
+                    <h1>Vidnag Framework</h1>
                     <p class="subtitle">Download videos using yt-dlp</p>
                 </div>
             </div>
         </header>
 
         <div class="tabs">
-            <button class="tab-button active" data-tab="downloads">Downloads</button>
-            <button class="tab-button" data-tab="files">Browse Files</button>
-            <button class="tab-button" data-tab="tools">Tools</button>
+            <button class="tab-button active" data-tab="downloads">Video Downloaders</button>
+            <button class="tab-button" data-tab="tools">Video Tools</button>
+            <button class="tab-button" data-tab="files">File Browser</button>
             <button class="tab-button" data-tab="settings">Settings</button>
             <button class="tab-button" data-tab="logs">Logs</button>
             <button class="help-button" id="help-modal-btn" title="Keyboard shortcuts and tips">
@@ -153,7 +153,7 @@
                 <h2>yt-dlp Settings</h2>
                 <div class="info-grid">
                     <div class="info-item">
-                        <span class="info-label">App Version:</span>
+                        <span class="info-label">Vidnag App Version:</span>
                         <span class="info-value" id="app-version">Loading...</span>
                     </div>
                     <div class="info-item">
@@ -349,7 +349,7 @@
             </section>
 
             <footer class="settings-footer">
-                <p>YT-DLP WebUI &copy; 2025 Maintained by Tidnag</p>
+                <p>Vidnag Framework &copy; 2025 Maintained by Tidnag</p>
                 <p class="footer-note">Built with yt-dlp for easy video downloading</p>
             </footer>
         </div>
@@ -410,7 +410,7 @@
             <!-- Upload Tip -->
             <section class="upload-tip glass-card">
                 <p style="color: var(--text-muted); font-size: 0.95rem; margin: 0;">
-                    💡 <strong>Tip:</strong> Need to modify your own video? Upload it from the <strong>Browse Files</strong> tab to process it here.
+                    💡 <strong>Tip:</strong> Need to modify your own video? Upload it from the <strong>File Browser</strong> tab to process it here.
                 </p>
             </section>
 

@@ -14,6 +14,9 @@ const activeWebSockets = new Map();
 // Interval ID for updating running time counters on active conversions
 let runningTimeInterval = null;
 
+// Domain mappings for display names (loaded from domain_mappings.json)
+let domainMappings = {};
+
 /**
  * Display a toast notification to the user
  * Toasts appear at the bottom of the screen and auto-dismiss after 5 seconds
@@ -2412,16 +2415,56 @@ function toggleAccessibility() {
     showToast(`Accessibility features ${enabled ? 'enabled' : 'disabled'}`, 'info');
 }
 
+/**
+ * Load domain mappings from domain_mappings.json
+ * Creates a reverse lookup map (domain -> display name)
+ */
+async function loadDomainMappings() {
+    try {
+        const response = await fetch(`${API_BASE}/assets/domain_mappings.json`);
+        if (!response.ok) {
+            console.warn('Could not load domain_mappings.json, using fallback');
+            return;
+        }
+        const mappings = await response.json();
+
+        // Create reverse lookup: domain -> display name
+        // e.g., {"youtu": "Youtube", "youtube": "Youtube", "x": "X", ...}
+        domainMappings = {};
+        for (const [displayName, domains] of Object.entries(mappings)) {
+            for (const domain of domains) {
+                domainMappings[domain.toLowerCase()] = displayName;
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to load domain mappings:', e);
+    }
+}
+
 function extractDomain(url) {
     try {
         const urlObj = new URL(url);
         const hostname = urlObj.hostname;
+
         // Extract main domain (e.g., instagram.com from www.instagram.com)
         const parts = hostname.split('.');
+        let domain;
         if (parts.length >= 2) {
-            return parts[parts.length - 2]; // e.g., "instagram" from "www.instagram.com"
+            domain = parts[parts.length - 2]; // e.g., "instagram" from "www.instagram.com"
+        } else {
+            domain = hostname;
         }
-        return hostname;
+
+        // Convert to lowercase for lookup
+        const domainLower = domain.toLowerCase();
+
+        // Check if we have a mapping for this domain
+        if (domainMappings[domainLower]) {
+            return domainMappings[domainLower];
+        }
+
+        // Otherwise, capitalize first letter
+        return domain.charAt(0).toUpperCase() + domain.slice(1);
     } catch (e) {
         return null;
     }
@@ -3591,7 +3634,10 @@ setInterval(async () => {
 }, 2000);
 
 // Event Listeners
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Load domain mappings first
+    await loadDomainMappings();
+
     // Initialize preferences first
     initPreferences();
 

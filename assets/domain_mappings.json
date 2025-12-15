@@ -1,0 +1,14 @@
+{
+  "Youtube": ["youtu", "youtube"],
+  "X": ["x", "twitter"],
+  "Instagram": ["instagram"],
+  "Facebook": ["facebook"],
+  "Reddit": ["reddit"],
+  "Tiktok": ["tiktok"],
+  "Twitch": ["twitch"],
+  "Vimeo": ["vimeo"],
+  "Dailymotion": ["dailymotion"],
+  "Soundcloud": ["soundcloud"],
+  "Spotify": ["spotify"],
+  "Bandcamp": ["bandcamp"]
+}
