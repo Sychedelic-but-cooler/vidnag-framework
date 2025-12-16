@@ -41,7 +41,7 @@ import uuid
 import platform
 
 # Application modules
-from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt
+from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings
 from settings import settings
 from admin_settings import get_admin_settings
 from security import (
@@ -55,7 +55,7 @@ from security import (
 from auth import PasswordService, JWTService, AuthService, AuditLogService
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.0.0-12"
+APP_VERSION = "2.1.1-12"
 
 def cleanup_old_logs():
     """
@@ -132,6 +132,30 @@ def set_directory_permissions():
 
     except Exception as e:
         logger.error(f"Error setting directory permissions: {e}")
+
+
+def get_client_ip(request: Request) -> str:
+    """
+    Get the client IP address from the request.
+
+    Checks request.state.client_ip first (set by proxy middleware),
+    then falls back to request.client.host.
+
+    Args:
+        request: FastAPI Request object
+
+    Returns:
+        Client IP address as string, or "unknown" if unavailable
+    """
+    # Try to get IP from middleware (handles proxy headers)
+    if hasattr(request.state, 'client_ip'):
+        return request.state.client_ip
+
+    # Fallback to direct connection IP
+    if request.client:
+        return request.client.host
+
+    return "unknown"
 
 
 @asynccontextmanager
@@ -2582,6 +2606,153 @@ async def get_release_notes():
         }
 
 
+@app.get("/api/auth/check-setup")
+async def check_setup_status(db: Session = Depends(get_db_session)):
+    """
+    Check if initial setup is needed (PUBLIC endpoint).
+
+    Returns whether the application needs first-time admin setup.
+    Setup is needed when first_time_setup flag is True in SystemSettings.
+
+    SECURITY: This is a read-only check and reveals no sensitive information.
+    """
+    try:
+        settings = db.query(SystemSettings).filter(SystemSettings.id == 1).first()
+
+        # If settings don't exist for some reason, create them
+        if not settings:
+            settings = SystemSettings(id=1, first_time_setup=True)
+            db.add(settings)
+            db.commit()
+
+        return {
+            "setup_needed": settings.first_time_setup,
+            "has_users": not settings.first_time_setup
+        }
+    except Exception as e:
+        # On error, assume setup is not needed (fail secure)
+        return {
+            "setup_needed": False,
+            "has_users": True,
+            "error": "Unable to determine setup status"
+        }
+
+
+@app.post("/api/auth/setup")
+async def create_first_admin(
+    request: Request,
+    setup_data: dict,
+    db: Session = Depends(get_db_session)
+):
+    """
+    Create the first admin user during initial setup (PUBLIC endpoint, one-time use).
+
+    SECURITY: This endpoint ONLY works when first_time_setup flag is True.
+    Once setup is completed, the flag is set to False and this endpoint returns 403 Forbidden.
+    This prevents unauthorized admin account creation after initial setup.
+
+    Args:
+        setup_data: Dict with 'username' and 'password'
+
+    Returns:
+        Success message or error
+    """
+    try:
+        # CRITICAL SECURITY CHECK: Only allow if first_time_setup flag is True
+        settings = db.query(SystemSettings).filter(SystemSettings.id == 1).first()
+        if not settings:
+            # Create settings if they don't exist
+            settings = SystemSettings(id=1, first_time_setup=True)
+            db.add(settings)
+            db.commit()
+
+        if not settings.first_time_setup:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Setup already completed. Admin user already exists."
+            )
+
+        # Extract credentials
+        username = setup_data.get("username", "").strip()
+        password = setup_data.get("password", "")
+
+        # Validate username
+        if not username or len(username) < 3 or len(username) > 32:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username must be between 3 and 32 characters"
+            )
+
+        if not re.match(r'^[a-zA-Z0-9_]+$', username):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username must contain only alphanumeric characters and underscores"
+            )
+
+        # Validate password
+        if not password or len(password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters long"
+            )
+
+        # Hash password
+        password_hash = PasswordService.hash_password(password)
+
+        # Create first admin user
+        admin_user = User(
+            username=username,
+            password_hash=password_hash,
+            is_admin=True,
+            is_disabled=False
+        )
+
+        db.add(admin_user)
+        db.commit()
+        db.refresh(admin_user)
+
+        # Get IP address for audit log
+        ip_address = request.client.host if request.client else "unknown"
+
+        # Log audit event
+        AuditLogService.log_event(
+            event_type="user_created",
+            ip_address=ip_address,
+            db=db,
+            user_id=admin_user.id,
+            username=username,
+            details={
+                "created_by": "initial_setup",
+                "is_admin": True,
+                "first_user": True
+            }
+        )
+
+        # CRITICAL: Set first_time_setup to False - setup is now complete
+        settings.first_time_setup = False
+        settings.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        await emit_log("INFO", "Auth", f"First admin user created via web setup: {username}")
+        await emit_log("INFO", "Auth", "First-time setup completed - setup flag set to False")
+
+        return {
+            "success": True,
+            "message": "Admin user created successfully",
+            "username": username,
+            "user_id": admin_user.id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await emit_log("ERROR", "Auth", f"Failed to create first admin user: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create admin user: {str(e)}"
+        )
+
+
 # ===========================
 # User Management Endpoints (Admin Only)
 # ===========================
@@ -2822,9 +2993,13 @@ async def root(request: Request):
     """
     Serve the main HTML page or redirect to login.
 
-    If authentication is enabled, checks for valid token in Authorization header
-    or as a query parameter (for browser redirects). If token is invalid or missing,
-    redirects to login page.
+    Priority order:
+    1. If auth disabled -> serve main page
+    2. If valid token -> serve main page
+    3. Otherwise -> redirect to login
+
+    Note: First-time setup is now handled by the login page itself,
+    which checks the setup flag and shows the appropriate form.
     """
     from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -2845,8 +3020,8 @@ async def root(request: Request):
 
     if token:
         # Validate token
-        with get_db() as db:
-            payload = JWTService.decode_token(token, db, admin_settings)
+        with get_db() as db_context:
+            payload = JWTService.decode_token(token, db_context, admin_settings)
             if payload:
                 # Valid token - serve main page
                 with open("assets/index.html") as f:

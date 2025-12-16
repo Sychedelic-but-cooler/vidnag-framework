@@ -1,6 +1,19 @@
 {
-  "current_version": "2.0.0-12",
+  "current_version": "2.1.1-12",
   "releases": [
+    {
+      "version": "2.1.1-12",
+      "date": "2024-12-16",
+      "title": "Admin Onboarding & Login Flow Improvements",
+      "highlights": [
+        "Integrated first-time admin setup into login page",
+        "Database-driven setup flag (SystemSettings table)",
+        "Automatic transition from setup to login mode",
+        "Single consolidated authentication interface",
+        "Fixed missing get_client_ip function error",
+        "Removed separate setup.html page for cleaner UX"
+      ]
+    },
     {
       "version": "2.0.0-12",
       "date": "2024-12-16",

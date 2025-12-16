@@ -288,6 +288,30 @@
             font-size: 0.95rem;
         }
 
+        .setup-badge {
+            display: inline-block;
+            background: linear-gradient(135deg,
+                rgba(var(--primary-color-rgb), 0.2),
+                rgba(var(--secondary-color-rgb), 0.2)
+            );
+            border: 1px solid rgba(var(--primary-color-rgb), 0.4);
+            color: var(--primary-color);
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .password-requirements {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            padding-left: 0.25rem;
+            margin-top: 0.25rem;
+        }
+
         /* Error message */
         .error-message {
             background: rgba(255, 68, 68, 0.15);
@@ -570,22 +594,28 @@
         </div>
     </div>
 
-    <!-- Right Section - Login Form -->
+    <!-- Right Section - Login/Setup Form -->
     <div class="login-right">
         <div class="login-form-container">
             <!-- Form header -->
             <div class="login-form-header">
-                <h2 class="login-form-title">Welcome Back</h2>
-                <p class="login-form-subtitle">Sign in to continue</p>
+                <!-- Setup badge (only shown during initial setup) -->
+                <div id="setup-badge" class="setup-badge" style="display: none;">Initial Setup</div>
+
+                <h2 id="form-title" class="login-form-title">Welcome Back</h2>
+                <p id="form-subtitle" class="login-form-subtitle">Sign in to continue</p>
             </div>
 
             <!-- Error message -->
             <div id="error-message" class="error-message"></div>
 
-            <!-- Login form -->
-            <form id="login-form" class="login-form">
+            <!-- Success message (for setup completion) -->
+            <div id="success-message" class="error-message" style="background: rgba(0, 255, 136, 0.15); border-color: rgba(0, 255, 136, 0.3); color: #00ff88;"></div>
+
+            <!-- Login/Setup form -->
+            <form id="auth-form" class="login-form">
                 <div class="form-group">
-                    <label for="username">Username</label>
+                    <label for="username" id="username-label">Username</label>
                     <input
                         type="text"
                         id="username"
@@ -596,10 +626,11 @@
                         autocomplete="username"
                         autofocus
                     >
+                    <div id="username-requirements" class="password-requirements" style="display: none;">3-32 characters, alphanumeric and underscores only</div>
                 </div>
 
                 <div class="form-group">
-                    <label for="password">Password</label>
+                    <label for="password" id="password-label">Password</label>
                     <input
                         type="password"
                         id="password"
@@ -608,6 +639,20 @@
                         placeholder="Enter your password"
                         required
                         autocomplete="current-password"
+                    >
+                    <div id="password-requirements" class="password-requirements" style="display: none;">Minimum 8 characters</div>
+                </div>
+
+                <!-- Password confirmation (only shown during setup) -->
+                <div id="password-confirm-group" class="form-group" style="display: none;">
+                    <label for="password-confirm">Confirm Password</label>
+                    <input
+                        type="password"
+                        id="password-confirm"
+                        name="password-confirm"
+                        class="form-input"
+                        placeholder="Re-enter your password"
+                        autocomplete="new-password"
                     >
                 </div>
 
@@ -622,7 +667,7 @@
                     </div>
                 </div>
 
-                <button type="submit" id="login-button" class="login-button">
+                <button type="submit" id="auth-button" class="login-button">
                     Sign In
                 </button>
             </form>
@@ -640,6 +685,73 @@
             }
             document.body.setAttribute('data-color-theme', savedColorTheme);
         })();
+
+        // Global flag to track if we're in setup mode
+        let isSetupMode = false;
+
+        // Check if setup is needed and configure the form accordingly
+        async function checkSetupStatus() {
+            try {
+                const response = await fetch('/api/auth/check-setup');
+                const data = await response.json();
+
+                if (data.setup_needed) {
+                    // Setup needed - configure form for admin creation
+                    isSetupMode = true;
+                    configureSetupMode();
+                } else {
+                    // Setup complete - configure form for login
+                    isSetupMode = false;
+                    configureLoginMode();
+                }
+
+                // Load release notes in both modes
+                loadReleaseNotes();
+            } catch (error) {
+                console.error('Failed to check setup status:', error);
+                // On error, assume login mode
+                isSetupMode = false;
+                configureLoginMode();
+                loadReleaseNotes();
+            }
+        }
+
+        function configureSetupMode() {
+            // Update UI for setup mode
+            document.getElementById('setup-badge').style.display = 'inline-block';
+            document.getElementById('form-title').textContent = 'Create Admin Account';
+            document.getElementById('form-subtitle').textContent = 'Set up your administrator credentials';
+            document.getElementById('username-label').textContent = 'Admin Username';
+            document.getElementById('password-label').textContent = 'Admin Password';
+            document.getElementById('username').placeholder = 'Choose a username';
+            document.getElementById('password').placeholder = 'Choose a strong password';
+            document.getElementById('password').autocomplete = 'new-password';
+            document.getElementById('username-requirements').style.display = 'block';
+            document.getElementById('password-requirements').style.display = 'block';
+            document.getElementById('password-confirm-group').style.display = 'block';
+            document.getElementById('password-confirm').required = true;
+            document.getElementById('auth-button').textContent = 'Create Admin Account';
+        }
+
+        function configureLoginMode() {
+            // Update UI for login mode
+            document.getElementById('setup-badge').style.display = 'none';
+            document.getElementById('form-title').textContent = 'Welcome Back';
+            document.getElementById('form-subtitle').textContent = 'Sign in to continue';
+            document.getElementById('username-label').textContent = 'Username';
+            document.getElementById('password-label').textContent = 'Password';
+            document.getElementById('username').placeholder = 'Enter your username';
+            document.getElementById('password').placeholder = 'Enter your password';
+            document.getElementById('password').autocomplete = 'current-password';
+            document.getElementById('username-requirements').style.display = 'none';
+            document.getElementById('password-requirements').style.display = 'none';
+            document.getElementById('password-confirm-group').style.display = 'none';
+            document.getElementById('password-confirm').required = false;
+            document.getElementById('auth-button').textContent = 'Sign In';
+        }
+
+        // Check setup status on page load
+        checkSetupStatus();
 
         // Load release notes
         async function loadReleaseNotes() {
@@ -685,13 +797,11 @@
             }
         }
 
-        // Load release notes on page load
-        loadReleaseNotes();
-
-        // Form submission
-        const form = document.getElementById('login-form');
+        // Form submission - handles both setup and login
+        const form = document.getElementById('auth-form');
         const errorMessage = document.getElementById('error-message');
-        const loginButton = document.getElementById('login-button');
+        const successMessage = document.getElementById('success-message');
+        const authButton = document.getElementById('auth-button');
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -699,20 +809,104 @@
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
 
-            // Clear previous errors
+            // Clear previous messages
             errorMessage.classList.remove('show');
+            successMessage.classList.remove('show');
             errorMessage.textContent = '';
+            successMessage.textContent = '';
 
             // Validate inputs
             if (!username || !password) {
-                showError('Please enter both username and password');
+                showError('Please fill in all required fields');
+                return;
+            }
+
+            if (isSetupMode) {
+                // Setup mode - create admin account
+                await handleSetup(username, password);
+            } else {
+                // Login mode - authenticate user
+                await handleLogin(username, password);
+            }
+        });
+
+        async function handleSetup(username, password) {
+            const passwordConfirm = document.getElementById('password-confirm').value;
+
+            // Setup-specific validation
+            if (!passwordConfirm) {
+                showError('Please confirm your password');
+                return;
+            }
+
+            if (password !== passwordConfirm) {
+                showError('Passwords do not match');
+                return;
+            }
+
+            if (username.length < 3 || username.length > 32) {
+                showError('Username must be between 3 and 32 characters');
+                return;
+            }
+
+            if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+                showError('Username must contain only alphanumeric characters and underscores');
+                return;
+            }
+
+            if (password.length < 8) {
+                showError('Password must be at least 8 characters long');
                 return;
             }
 
             // Show loading state
-            loginButton.disabled = true;
-            loginButton.classList.add('loading');
-            loginButton.innerHTML = '<span class="button-spinner"></span> Signing In...';
+            authButton.disabled = true;
+            authButton.classList.add('loading');
+            authButton.innerHTML = '<span class="button-spinner"></span> Creating Account...';
+
+            try {
+                const response = await fetch('/api/auth/setup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Show success message
+                    showSuccess('Admin account created successfully! Switching to login...');
+                    authButton.innerHTML = '✓ Success!';
+                    authButton.style.background = 'linear-gradient(135deg, #00ff88, #00cc66)';
+
+                    // Switch to login mode after short delay
+                    setTimeout(() => {
+                        isSetupMode = false;
+                        configureLoginMode();
+                        form.reset();
+                        authButton.disabled = false;
+                        authButton.classList.remove('loading');
+                        authButton.style.background = '';
+                        successMessage.classList.remove('show');
+                    }, 2000);
+                } else {
+                    showError(data.detail || 'Failed to create admin account');
+                    resetButton();
+                }
+            } catch (error) {
+                console.error('Setup error:', error);
+                showError('Network error. Please check your connection and try again.');
+                resetButton();
+            }
+        }
+
+        async function handleLogin(username, password) {
+            // Show loading state
+            authButton.disabled = true;
+            authButton.classList.add('loading');
+            authButton.innerHTML = '<span class="button-spinner"></span> Signing In...';
 
             try {
                 const response = await fetch('/api/auth/login', {
@@ -732,8 +926,8 @@
                     localStorage.setItem('is_admin', data.is_admin);
 
                     // Show success animation
-                    loginButton.innerHTML = '✓ Success!';
-                    loginButton.style.background = 'linear-gradient(135deg, #00ff88, #00cc66)';
+                    authButton.innerHTML = '✓ Success!';
+                    authButton.style.background = 'linear-gradient(135deg, #00ff88, #00cc66)';
 
                     // Redirect to main app
                     setTimeout(() => {
@@ -749,25 +943,36 @@
                 showError('Network error. Please check your connection and try again.');
                 resetButton();
             }
-        });
+        }
 
         function showError(message) {
             errorMessage.textContent = message;
             errorMessage.classList.add('show');
         }
 
-        function resetButton() {
-            loginButton.disabled = false;
-            loginButton.classList.remove('loading');
-            loginButton.innerHTML = 'Sign In';
+        function showSuccess(message) {
+            successMessage.textContent = message;
+            successMessage.classList.add('show');
         }
 
-        // Clear error on input
+        function resetButton() {
+            authButton.disabled = false;
+            authButton.classList.remove('loading');
+            authButton.innerHTML = isSetupMode ? 'Create Admin Account' : 'Sign In';
+        }
+
+        // Clear messages on input
         document.getElementById('username').addEventListener('input', () => {
             errorMessage.classList.remove('show');
+            successMessage.classList.remove('show');
         });
         document.getElementById('password').addEventListener('input', () => {
             errorMessage.classList.remove('show');
+            successMessage.classList.remove('show');
+        });
+        document.getElementById('password-confirm').addEventListener('input', () => {
+            errorMessage.classList.remove('show');
+            successMessage.classList.remove('show');
         });
     </script>
 </body>

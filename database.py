@@ -228,13 +228,38 @@ class FailedLoginAttempt(Base):
     lockout_until = Column(UTCDateTime, nullable=True)  # Set when threshold reached
 
 
+class SystemSettings(Base):
+    """
+    System-level settings and flags stored in the database.
+
+    Used for tracking system state like first-time setup completion.
+    This table should only ever have ONE row (singleton pattern).
+    """
+    __tablename__ = "system_settings"
+
+    id = Column(Integer, primary_key=True, default=1)  # Always 1
+    first_time_setup = Column(Boolean, default=True, nullable=False)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 def init_db():
     """
     Initialize the database schema.
     Creates all tables defined by our models if they don't exist yet.
     Safe to call multiple times - won't recreate existing tables.
+
+    Also ensures SystemSettings singleton row exists with first_time_setup flag.
     """
     Base.metadata.create_all(bind=engine)
+
+    # Ensure SystemSettings singleton exists
+    with get_db() as db:
+        settings = db.query(SystemSettings).filter(SystemSettings.id == 1).first()
+        if not settings:
+            settings = SystemSettings(id=1, first_time_setup=True)
+            db.add(settings)
+            db.commit()
 
 
 @contextmanager
