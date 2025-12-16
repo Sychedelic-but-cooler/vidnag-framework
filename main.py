@@ -15,6 +15,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 # Data validation and database
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 # Date and time handling (always use timezone-aware datetimes)
 from datetime import datetime, timedelta, timezone
@@ -41,7 +42,7 @@ import uuid
 import platform
 
 # Application modules
-from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings
+from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings, JWTKey, AuthAuditLog
 from settings import settings
 from admin_settings import get_admin_settings
 from security import (
@@ -2993,6 +2994,501 @@ async def delete_user(
     await emit_log("INFO", "User Management", f"Admin {current_admin.get('username')} deleted user {username}")
 
     return {"message": f"User {username} deleted successfully"}
+
+
+# ============================================
+# ADMIN SYSTEM MANAGEMENT ENDPOINTS
+# ============================================
+
+@app.get("/api/admin/database/stats")
+async def get_database_stats(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Get database statistics (ADMIN ONLY).
+
+    Returns table counts and database size information.
+    """
+    stats = {
+        "users": db.query(User).count(),
+        "downloads": db.query(Download).count(),
+        "conversions": db.query(ToolConversion).count(),
+        "audit_logs": db.query(AuthAuditLog).count(),
+        "failed_login_attempts": db.query(FailedLoginAttempt).count(),
+        "user_login_history": db.query(UserLoginHistory).count(),
+        "jwt_keys": db.query(JWTKey).count(),
+    }
+
+    # Get database file size
+    import os
+    db_path = "downloads.db"
+    if os.path.exists(db_path):
+        stats["database_size_bytes"] = os.path.getsize(db_path)
+        stats["database_size_mb"] = round(os.path.getsize(db_path) / (1024 * 1024), 2)
+    else:
+        stats["database_size_bytes"] = 0
+        stats["database_size_mb"] = 0
+
+    await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} viewed database stats")
+
+    return stats
+
+
+@app.post("/api/admin/database/backup")
+async def backup_database(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Create database backup (ADMIN ONLY).
+
+    Creates a timestamped backup of the SQLite database in the backups/ directory.
+    """
+    import shutil
+    from datetime import datetime
+
+    db_path = "downloads.db"
+    backup_dir = "backups"
+
+    if not os.path.exists(db_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Database file not found"
+        )
+
+    # Create backups directory if it doesn't exist
+    os.makedirs(backup_dir, exist_ok=True)
+
+    # Create backup filename with timestamp
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    backup_filename = f"{backup_dir}/downloads.db.backup.{timestamp}"
+
+    try:
+        shutil.copy2(db_path, backup_filename)
+        backup_size = os.path.getsize(backup_filename)
+
+        await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} created database backup: {backup_filename}")
+
+        return {
+            "message": "Database backup created successfully",
+            "filename": backup_filename,
+            "size_bytes": backup_size,
+            "size_mb": round(backup_size / (1024 * 1024), 2)
+        }
+    except Exception as e:
+        await emit_log("ERROR", "Admin", f"Failed to create database backup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create backup: {str(e)}"
+        )
+
+
+@app.post("/api/admin/database/vacuum")
+async def vacuum_database(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    VACUUM the database to reclaim space and optimize (ADMIN ONLY).
+
+    Rebuilds the database file, repacking it into minimal disk space.
+    """
+    try:
+        # Use a raw connection to run VACUUM (cannot be in a transaction)
+        from database import engine
+        with engine.connect() as connection:
+            connection.execute(text("VACUUM"))
+            connection.commit()
+
+        await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} ran database VACUUM")
+
+        # Get new database size
+        import os
+        db_path = "downloads.db"
+        new_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+
+        return {
+            "message": "Database VACUUM completed successfully",
+            "new_size_mb": round(new_size / (1024 * 1024), 2)
+        }
+    except Exception as e:
+        await emit_log("ERROR", "Admin", f"Failed to VACUUM database: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to VACUUM database: {str(e)}"
+        )
+
+
+@app.post("/api/admin/database/optimize")
+async def optimize_database(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Optimize the database for better query performance (ADMIN ONLY).
+
+    Analyzes tables and updates statistics.
+    """
+    try:
+        from database import engine
+        with engine.connect() as connection:
+            connection.execute(text("ANALYZE"))
+            connection.commit()
+
+        await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} ran database OPTIMIZE")
+
+        return {"message": "Database optimized successfully"}
+    except Exception as e:
+        await emit_log("ERROR", "Admin", f"Failed to optimize database: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to optimize database: {str(e)}"
+        )
+
+
+@app.post("/api/admin/database/integrity-check")
+async def check_database_integrity(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Check database integrity (ADMIN ONLY).
+
+    Verifies that the database structure is valid.
+    """
+    try:
+        from database import engine
+        with engine.connect() as connection:
+            result = connection.execute(text("PRAGMA integrity_check"))
+            integrity_result = result.fetchall()
+
+            # If integrity check passes, it returns [('ok',)]
+            is_ok = len(integrity_result) == 1 and integrity_result[0][0] == 'ok'
+
+            await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} ran database integrity check")
+
+            return {
+                "status": "ok" if is_ok else "error",
+                "message": "Database integrity check passed" if is_ok else "Database integrity check found issues",
+                "details": [row[0] for row in integrity_result]
+            }
+    except Exception as e:
+        await emit_log("ERROR", "Admin", f"Failed to check database integrity: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check database integrity: {str(e)}"
+        )
+
+
+@app.get("/api/admin/database/backups")
+async def list_backups(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    List available database backup files (ADMIN ONLY).
+
+    Includes both manual backups and pre-restore safety backups.
+    """
+    import os
+    import glob
+    from datetime import datetime
+
+    backup_dir = "backups"
+
+    # Create backups directory if it doesn't exist
+    os.makedirs(backup_dir, exist_ok=True)
+
+    # Get both manual backups and pre-restore safety backups from backups/ directory
+    backup_files = glob.glob(f"{backup_dir}/downloads.db.backup.*") + glob.glob(f"{backup_dir}/downloads.db.pre-restore.*")
+
+    backups = []
+    for backup_file in backup_files:
+        stat = os.stat(backup_file)
+        backup_type = "Safety Backup" if "pre-restore" in backup_file else "Manual Backup"
+        backups.append({
+            "filename": backup_file,
+            "type": backup_type,
+            "size_bytes": stat.st_size,
+            "size_mb": round(stat.st_size / (1024 * 1024), 2),
+            "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat()
+        })
+
+    # Sort by creation time, newest first
+    backups.sort(key=lambda x: x['created_at'], reverse=True)
+
+    return {
+        "total": len(backups),
+        "backups": backups
+    }
+
+
+@app.post("/api/admin/database/restore")
+async def restore_database(
+    backup_filename: str,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Restore database from a backup file (ADMIN ONLY).
+
+    WARNING: This will replace the current database with the backup.
+    All current data will be lost.
+    """
+    import os
+    import shutil
+    from datetime import datetime
+
+    db_path = "downloads.db"
+    backup_dir = "backups"
+
+    # Validate backup file exists and has correct prefix
+    if not backup_filename.startswith(f"{backup_dir}/downloads.db.backup.") and not backup_filename.startswith(f"{backup_dir}/downloads.db.pre-restore."):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid backup filename"
+        )
+
+    if not os.path.exists(backup_filename):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backup file not found"
+        )
+
+    try:
+        # Create backups directory if it doesn't exist
+        os.makedirs(backup_dir, exist_ok=True)
+
+        # Create a safety backup of current database before restoring
+        safety_backup = f"{backup_dir}/downloads.db.pre-restore.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        if os.path.exists(db_path):
+            shutil.copy2(db_path, safety_backup)
+
+        # Restore from backup
+        shutil.copy2(backup_filename, db_path)
+
+        await emit_log("WARNING", "Admin", f"Admin {current_admin.get('username')} restored database from backup: {backup_filename}")
+
+        return {
+            "message": "Database restored successfully from backup",
+            "backup_filename": backup_filename,
+            "safety_backup": safety_backup
+        }
+    except Exception as e:
+        await emit_log("ERROR", "Admin", f"Failed to restore database from backup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to restore database: {str(e)}"
+        )
+
+
+@app.delete("/api/admin/database/backups/{backup_filename}")
+async def delete_backup(
+    backup_filename: str,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Delete a backup file (ADMIN ONLY).
+    Expects just the filename part (e.g., "downloads.db.backup.20251216_220650")
+    """
+    import os
+
+    # Validate backup filename format (without directory prefix)
+    if not backup_filename.startswith("downloads.db.backup.") and not backup_filename.startswith("downloads.db.pre-restore."):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid backup filename"
+        )
+
+    # Construct full path
+    backup_dir = "backups"
+    full_path = os.path.join(backup_dir, backup_filename)
+
+    if not os.path.exists(full_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backup file not found"
+        )
+
+    try:
+        os.remove(full_path)
+        await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} deleted backup: {backup_filename}")
+
+        return {
+            "message": "Backup deleted successfully",
+            "filename": backup_filename
+        }
+    except Exception as e:
+        await emit_log("ERROR", "Admin", f"Failed to delete backup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete backup: {str(e)}"
+        )
+
+
+@app.get("/api/admin/database/backups/{backup_filename}/download")
+async def download_backup(
+    backup_filename: str,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Download a backup file (ADMIN ONLY).
+    Expects just the filename part (e.g., "downloads.db.backup.20251216_220650")
+    """
+    import os
+    from fastapi.responses import FileResponse
+
+    # Validate backup filename format (without directory prefix)
+    if not backup_filename.startswith("downloads.db.backup.") and not backup_filename.startswith("downloads.db.pre-restore."):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid backup filename"
+        )
+
+    # Construct full path
+    backup_dir = "backups"
+    full_path = os.path.join(backup_dir, backup_filename)
+
+    if not os.path.exists(full_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Backup file not found"
+        )
+
+    try:
+        await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} downloaded backup: {backup_filename}")
+
+        return FileResponse(
+            path=full_path,
+            filename=backup_filename,
+            media_type='application/octet-stream'
+        )
+    except Exception as e:
+        await emit_log("ERROR", "Admin", f"Failed to download backup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download backup: {str(e)}"
+        )
+
+
+@app.get("/api/admin/audit-logs")
+async def get_audit_logs(
+    limit: int = 100,
+    offset: int = 0,
+    event_type: Optional[str] = None,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Get audit logs with pagination (ADMIN ONLY).
+
+    Returns authentication and user management audit trail.
+    """
+    query = db.query(AuthAuditLog).order_by(AuthAuditLog.timestamp.desc())
+
+    # Filter by event type if specified
+    if event_type:
+        query = query.filter(AuthAuditLog.event_type == event_type)
+
+    # Get total count for pagination
+    total = query.count()
+
+    # Apply pagination
+    logs = query.offset(offset).limit(limit).all()
+
+    # Convert to dict and parse JSON details
+    import json
+    result = []
+    for log in logs:
+        log_dict = {
+            "id": log.id,
+            "event_type": log.event_type,
+            "user_id": log.user_id,
+            "username": log.username,
+            "ip_address": log.ip_address,
+            "timestamp": log.timestamp.isoformat(),
+            "details": json.loads(log.details) if log.details else None
+        }
+        result.append(log_dict)
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "logs": result
+    }
+
+
+@app.get("/api/admin/failed-logins")
+async def get_failed_logins(
+    limit: int = 100,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Get recent failed login attempts (ADMIN ONLY).
+
+    Returns failed login attempts for security monitoring.
+    """
+    failed_attempts = db.query(FailedLoginAttempt)\
+        .order_by(FailedLoginAttempt.attempt_time.desc())\
+        .limit(limit)\
+        .all()
+
+    result = []
+    for attempt in failed_attempts:
+        result.append({
+            "id": attempt.id,
+            "username": attempt.username,
+            "ip_address": attempt.ip_address,
+            "attempt_time": attempt.attempt_time.isoformat(),
+            "lockout_until": attempt.lockout_until.isoformat() if attempt.lockout_until else None,
+            "is_locked": attempt.lockout_until and attempt.lockout_until > datetime.now(timezone.utc)
+        })
+
+    return {
+        "total": len(result),
+        "failed_attempts": result
+    }
+
+
+@app.get("/api/admin/sessions")
+async def get_active_sessions(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Get list of active user sessions (ADMIN ONLY).
+
+    Note: Since JWT is stateless, this shows recent successful logins within the last 24 hours.
+    """
+    from datetime import timedelta
+
+    # Get successful logins in the last 24 hours
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    recent_logins = db.query(UserLoginHistory)\
+        .filter(UserLoginHistory.success == True)\
+        .filter(UserLoginHistory.login_time >= cutoff_time)\
+        .order_by(UserLoginHistory.login_time.desc())\
+        .all()
+
+    # Get user info for each session
+    sessions = []
+    for login in recent_logins:
+        user = db.query(User).filter(User.id == login.user_id).first()
+        if user:
+            sessions.append({
+                "id": login.id,
+                "user_id": login.user_id,
+                "username": user.username,
+                "is_admin": user.is_admin,
+                "ip_address": login.ip_address,
+                "login_time": login.login_time.isoformat(),
+                "user_agent": login.user_agent
+            })
+
+    return {
+        "total": len(sessions),
+        "sessions": sessions,
+        "note": "JWT tokens are stateless. Showing successful logins in the last 24 hours."
+    }
 
 
 @app.get("/")

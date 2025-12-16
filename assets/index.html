@@ -28,6 +28,14 @@
                             <path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"></path>
                         </svg>
                     </button>
+                    <button class="icon-button tab-button" id="admin-settings-icon-btn" data-tab="admin-settings" title="Admin Settings" style="display: none;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <line x1="12" y1="9" x2="12" y2="9.01"></line>
+                            <line x1="12" y1="15" x2="12" y2="15.01"></line>
+                        </svg>
+                    </button>
                     <button class="icon-button" id="help-modal-btn" title="Keyboard shortcuts and tips">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <circle cx="12" cy="12" r="10"></circle>
@@ -287,55 +295,6 @@
                 </div>
             </section>
 
-            <section class="cleanup glass-card">
-                <h2>Cleanup</h2>
-                <p>Remove failed downloads and stuck conversions to free up space.</p>
-
-                <div class="cleanup-subsection">
-                    <h3>Failed Downloads</h3>
-                    <p class="cleanup-description">Remove failed downloads and orphaned files.</p>
-                    <div class="form-group">
-                        <label for="cleanup-days">Remove downloads older than:</label>
-                        <select id="cleanup-days">
-                            <option value="1">1 day</option>
-                            <option value="7" selected>7 days</option>
-                            <option value="30">30 days</option>
-                            <option value="90">90 days</option>
-                        </select>
-                    </div>
-                    <button id="cleanup-btn" class="btn btn-danger">Clean Up Failed Downloads</button>
-                    <div id="cleanup-stats" class="cleanup-stats" style="display: none;">
-                        <p><strong>Cleanup Results:</strong></p>
-                        <p>Downloads removed: <span id="cleanup-downloads">0</span></p>
-                        <p>Files removed: <span id="cleanup-files">0</span></p>
-                        <p>Space freed: <span id="cleanup-space">0 MB</span></p>
-                    </div>
-                </div>
-
-                <div class="cleanup-divider"></div>
-
-                <div class="cleanup-subsection">
-                    <h3>Stale Conversions</h3>
-                    <p class="cleanup-description">Remove conversions stuck in "queued" or "converting" state.</p>
-                    <div class="form-group">
-                        <label for="cleanup-hours">Remove conversions stuck for more than:</label>
-                        <select id="cleanup-hours">
-                            <option value="1" selected>1 hour</option>
-                            <option value="2">2 hours</option>
-                            <option value="6">6 hours</option>
-                            <option value="24">24 hours</option>
-                        </select>
-                    </div>
-                    <button id="cleanup-conversions-btn" class="btn btn-danger">Clean Up Stale Conversions</button>
-                    <div id="conversion-cleanup-stats" class="cleanup-stats" style="display: none;">
-                        <p><strong>Cleanup Results:</strong></p>
-                        <p>Conversions removed: <span id="cleanup-conversions-count">0</span></p>
-                        <p>Files removed: <span id="cleanup-conversion-files">0</span></p>
-                        <p>Space freed: <span id="cleanup-conversion-space">0 MB</span></p>
-                    </div>
-                </div>
-            </section>
-
             <!-- Cookie Management Section -->
             <section class="cookie-management glass-card">
                 <h2>Cookie Files</h2>
@@ -514,6 +473,247 @@
                 </div>
             </div>
         </div>
+
+        <!-- Admin Settings Tab -->
+        <div id="admin-settings-tab" class="tab-content">
+            <!-- User Management Section -->
+            <section class="user-management glass-card">
+                <h2>👥 User Management</h2>
+
+                <!-- Create User Button -->
+                <div class="section-actions">
+                    <button id="create-user-btn" class="btn btn-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 0.5rem;">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Create New User
+                    </button>
+                </div>
+
+                <!-- Users Table -->
+                <div class="users-table-container">
+                    <table class="users-table">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Status</th>
+                                <th>Role</th>
+                                <th>Last Login</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-table-body">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Loading/Empty States -->
+                <div id="users-loading" class="loading-state" style="display: none;">
+                    Loading users...
+                </div>
+                <div id="users-empty" class="empty-state" style="display: none;">
+                    No users found. Create your first user above.
+                </div>
+            </section>
+
+            <!-- System Management Section -->
+            <section class="system-management glass-card">
+                <h2>⚙️ System Management</h2>
+
+                <!-- Subsection Tabs -->
+                <div class="subsection-tabs">
+                    <button class="subsection-tab active" data-subsection="cleanup">Cleanup</button>
+                    <button class="subsection-tab" data-subsection="database">Database</button>
+                    <button class="subsection-tab" data-subsection="logs">System Logs</button>
+                    <button class="subsection-tab" data-subsection="app-config">App Config</button>
+                </div>
+
+                <!-- Cleanup Subsection (moved from Settings) -->
+                <div id="cleanup-subsection" class="subsection-content active">
+                    <h3>Cleanup Tools</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Remove old downloads and completed conversions to free up disk space.</p>
+
+                    <div class="cleanup-subsection">
+                        <h3>Failed Downloads</h3>
+                        <p class="cleanup-description">Remove failed downloads and orphaned files.</p>
+                        <div class="form-group">
+                            <label for="cleanup-days">Remove downloads older than:</label>
+                            <select id="cleanup-days">
+                                <option value="1">1 day</option>
+                                <option value="7" selected>7 days</option>
+                                <option value="30">30 days</option>
+                                <option value="90">90 days</option>
+                            </select>
+                        </div>
+                        <button id="cleanup-btn" class="btn btn-danger">Clean Up Failed Downloads</button>
+                        <div id="cleanup-stats" class="cleanup-stats" style="display: none;">
+                            <p><strong>Cleanup Results:</strong></p>
+                            <p>Downloads removed: <span id="cleanup-downloads">0</span></p>
+                            <p>Files removed: <span id="cleanup-files">0</span></p>
+                            <p>Space freed: <span id="cleanup-space">0 MB</span></p>
+                        </div>
+                    </div>
+
+                    <div class="cleanup-divider"></div>
+
+                    <div class="cleanup-subsection">
+                        <h3>Stale Conversions</h3>
+                        <p class="cleanup-description">Remove conversions stuck in "queued" or "converting" state.</p>
+                        <div class="form-group">
+                            <label for="cleanup-hours">Remove conversions stuck for more than:</label>
+                            <select id="cleanup-hours">
+                                <option value="1" selected>1 hour</option>
+                                <option value="2">2 hours</option>
+                                <option value="6">6 hours</option>
+                                <option value="24">24 hours</option>
+                            </select>
+                        </div>
+                        <button id="cleanup-conversions-btn" class="btn btn-danger">Clean Up Stale Conversions</button>
+                        <div id="conversion-cleanup-stats" class="cleanup-stats" style="display: none;">
+                            <p><strong>Cleanup Results:</strong></p>
+                            <p>Conversions removed: <span id="cleanup-conversions-count">0</span></p>
+                            <p>Files removed: <span id="cleanup-conversion-files">0</span></p>
+                            <p>Space freed: <span id="cleanup-conversion-space">0 MB</span></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Database Subsection -->
+                <div id="database-subsection" class="subsection-content">
+                    <h3>Database Management</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Manage your application database, create backups, and view statistics.</p>
+
+                    <!-- Database Actions -->
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 2rem;">
+                        <button id="database-backup-btn" class="btn btn-primary">
+                            📦 Create Backup
+                        </button>
+                        <button id="database-vacuum-btn" class="btn btn-secondary">
+                            🧹 Vacuum Database
+                        </button>
+                        <button id="database-optimize-btn" class="btn btn-secondary">
+                            ⚡ Optimize
+                        </button>
+                        <button id="database-integrity-btn" class="btn btn-secondary">
+                            ✓ Integrity Check
+                        </button>
+                    </div>
+
+                    <!-- Database Stats -->
+                    <div id="database-stats" class="stats-container" style="margin-bottom: 2rem;">
+                        <!-- Database stats populated by JavaScript -->
+                    </div>
+
+                    <!-- Backup Restore Section -->
+                    <div class="backup-restore-section">
+                        <h4 style="margin-bottom: 1rem;">Restore from Backup</h4>
+                        <div class="warning-box" style="margin-bottom: 1rem;">
+                            <strong>⚠️ Warning:</strong> Restoring from backup will replace all current data. This action cannot be undone. A safety backup will be created automatically.
+                        </div>
+
+                        <div id="backups-list-container">
+                            <p class="loading-state">Click "Load Backups" to view available backups</p>
+                        </div>
+
+                        <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+                            <button id="load-backups-btn" class="btn btn-secondary">
+                                🔄 Load Backups
+                            </button>
+                            <button id="restore-backup-btn" class="btn btn-danger" disabled>
+                                🔁 Restore Selected Backup
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs Subsection -->
+                <div id="logs-subsection" class="subsection-content">
+                    <h3>System Logs & Audit Trail</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">View system logs and user activity audit trail.</p>
+
+                    <div id="audit-logs-container">
+                        <!-- Audit logs populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- App Config Subsection -->
+                <div id="app-config-subsection" class="subsection-content">
+                    <h3>Application Configuration</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Edit admin_settings.json configuration. Changes require application restart.</p>
+
+                    <div class="warning-box">
+                        <strong>⚠️ Warning:</strong> Incorrect configuration may prevent the application from starting. Make backups before editing.
+                    </div>
+
+                    <div id="app-config-editor" style="margin-top: 1.5rem;">
+                        <!-- Configuration editor will be added in future phase -->
+                        <p style="color: var(--text-muted); font-style: italic;">Configuration editor coming soon.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Security Management Section -->
+            <section class="security-management glass-card">
+                <h2>🔒 Security Management</h2>
+
+                <!-- Subsection Tabs -->
+                <div class="subsection-tabs">
+                    <button class="subsection-tab active" data-subsection="auth-toggle">Authentication</button>
+                    <button class="subsection-tab" data-subsection="failed-logins">Failed Logins</button>
+                    <button class="subsection-tab" data-subsection="security-config">Security Config</button>
+                    <button class="subsection-tab" data-subsection="sessions">Active Sessions</button>
+                </div>
+
+                <!-- Auth Toggle Subsection -->
+                <div id="auth-toggle-subsection" class="subsection-content active">
+                    <h3>Authentication System</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Enable or disable the authentication system. When disabled, all users have admin access.</p>
+
+                    <div class="warning-box">
+                        <strong>⚠️ Warning:</strong> Disabling authentication removes all security. Only disable in trusted environments.
+                    </div>
+
+                    <div id="auth-toggle-controls" style="margin-top: 1.5rem;">
+                        <!-- Auth toggle controls will be added in future phase -->
+                        <p style="color: var(--text-muted); font-style: italic;">Authentication controls coming soon. Edit admin_settings.json manually to change auth settings.</p>
+                    </div>
+                </div>
+
+                <!-- Failed Logins Subsection -->
+                <div id="failed-logins-subsection" class="subsection-content">
+                    <h3>Failed Login Attempts & Locked Accounts</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Monitor failed login attempts and manage locked accounts.</p>
+
+                    <div id="failed-logins-container">
+                        <!-- Failed logins populated by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Security Config Subsection -->
+                <div id="security-config-subsection" class="subsection-content">
+                    <h3>Security Settings</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure security thresholds, JWT expiry, and IP tracking settings.</p>
+
+                    <div id="security-config-form">
+                        <!-- Security config form will be added in future phase -->
+                        <p style="color: var(--text-muted); font-style: italic;">Security settings editor coming soon. Edit admin_settings.json manually to change security settings.</p>
+                    </div>
+                </div>
+
+                <!-- Sessions Subsection -->
+                <div id="sessions-subsection" class="subsection-content">
+                    <h3>Active Sessions</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">View current logged-in users and their recent activity.</p>
+
+                    <div id="sessions-container">
+                        <!-- Active sessions populated by JavaScript -->
+                    </div>
+                </div>
+            </section>
+        </div>
     </div>
 
     <!-- Toast notifications -->
@@ -535,6 +735,79 @@
                 <div id="help-detail-content">
                     <!-- Detail content with back button populated by JavaScript -->
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit User Modal -->
+    <div id="user-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="user-modal-title">Create User</h2>
+                <button class="modal-close" id="user-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="user-form">
+                    <input type="hidden" id="user-form-id" value="">
+
+                    <div class="form-group">
+                        <label for="user-form-username">Username *</label>
+                        <input type="text" id="user-form-username" required
+                               pattern="[a-zA-Z0-9_]{3,32}"
+                               title="3-32 characters, alphanumeric and underscores only">
+                        <small>3-32 characters, alphanumeric and underscores only</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="user-form-password">Password *</label>
+                        <input type="password" id="user-form-password" required minlength="8">
+                        <small>Minimum 8 characters</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="user-form-password-confirm">Confirm Password *</label>
+                        <input type="password" id="user-form-password-confirm" required>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label>
+                            <input type="checkbox" id="user-form-is-admin">
+                            <span>Administrator</span>
+                        </label>
+                        <small>Admins can access all settings and manage users</small>
+                    </div>
+
+                    <div class="form-group checkbox-group" id="user-form-disabled-group" style="display: none;">
+                        <label>
+                            <input type="checkbox" id="user-form-is-disabled">
+                            <span>Account Disabled</span>
+                        </label>
+                        <small>Disabled accounts cannot log in</small>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" id="user-form-cancel">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="user-form-submit">Create User</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete User Confirmation Modal -->
+    <div id="delete-user-modal" class="modal" style="display: none;">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2>Delete User</h2>
+                <button class="modal-close" id="delete-user-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete user <strong id="delete-user-username"></strong>?</p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="delete-user-cancel">Cancel</button>
+                <button class="btn btn-danger" id="delete-user-confirm">Delete User</button>
             </div>
         </div>
     </div>

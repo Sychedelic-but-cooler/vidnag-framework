@@ -185,6 +185,12 @@ async function checkAuth() {
             if (logoutBtn) {
                 logoutBtn.style.display = 'none';
             }
+
+            // SHOW admin settings icon when auth is disabled (backward compatibility)
+            const adminSettingsIcon = document.getElementById('admin-settings-icon-btn');
+            if (adminSettingsIcon) {
+                adminSettingsIcon.style.display = 'flex';
+            }
             return;
         }
 
@@ -216,6 +222,17 @@ async function checkAuth() {
         if (logoutBtn) {
             logoutBtn.style.display = 'flex';
         }
+
+        // Show/hide admin settings icon based on admin status
+        const adminSettingsIcon = document.getElementById('admin-settings-icon-btn');
+        if (adminSettingsIcon) {
+            if (AUTH.isAdmin()) {
+                adminSettingsIcon.style.display = 'flex';
+            } else {
+                adminSettingsIcon.style.display = 'none';
+            }
+        }
+
         displayUserInfo(userData);
     } catch (error) {
         console.error('Auth check error:', error);
@@ -497,6 +514,10 @@ function initTabs() {
 
             if (targetTab === 'tools') {
                 loadToolsTab();
+            }
+
+            if (targetTab === 'admin-settings') {
+                loadAdminSettingsTab();
             }
 
             // Refresh logs display to apply any active filters
@@ -3888,6 +3909,996 @@ function checkForPreselectedVideo() {
     }
 }
 
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+/**
+ * Load and display all users in the users table
+ */
+async function loadUsers() {
+    const tbody = document.getElementById('users-table-body');
+    const loading = document.getElementById('users-loading');
+    const empty = document.getElementById('users-empty');
+
+    if (!tbody || !loading || !empty) {
+        console.log('User management elements not found, skipping loadUsers');
+        return;
+    }
+
+    loading.style.display = 'block';
+    tbody.innerHTML = '';
+    empty.style.display = 'none';
+
+    try {
+        const response = await apiFetch('/api/users');
+        if (!response.ok) {
+            throw new Error('Failed to load users');
+        }
+
+        const users = await response.json();
+        loading.style.display = 'none';
+
+        if (users.length === 0) {
+            empty.style.display = 'block';
+            return;
+        }
+
+        users.forEach(user => {
+            const row = createUserRow(user);
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        console.error('Error loading users:', error);
+        loading.style.display = 'none';
+        showToast('Failed to load users', 'error');
+    }
+}
+
+/**
+ * Create a table row for a user
+ */
+function createUserRow(user) {
+    const row = document.createElement('tr');
+    row.dataset.userId = user.id;
+
+    // Status badge
+    const statusBadge = user.is_disabled
+        ? '<span class="badge badge-danger">Disabled</span>'
+        : '<span class="badge badge-success">Active</span>';
+
+    // Role badge
+    const roleBadge = user.is_admin
+        ? '<span class="badge badge-primary">Admin</span>'
+        : '<span class="badge badge-secondary">User</span>';
+
+    // Format dates
+    const lastLogin = user.last_login
+        ? new Date(user.last_login).toLocaleString()
+        : 'Never';
+    const created = new Date(user.created_at).toLocaleString();
+
+    // Prevent editing/deleting current user
+    const currentUserId = AUTH.getUserId();
+    const isSelf = user.id === currentUserId;
+
+    row.innerHTML = `
+        <td><strong>${user.username}</strong></td>
+        <td>${statusBadge}</td>
+        <td>${roleBadge}</td>
+        <td>${lastLogin}</td>
+        <td>${created}</td>
+        <td class="actions-cell">
+            <button class="btn btn-small btn-secondary edit-user-btn"
+                    data-user-id="${user.id}" ${isSelf ? 'disabled title="Cannot edit yourself"' : ''}>
+                Edit
+            </button>
+            <button class="btn btn-small btn-danger delete-user-btn"
+                    data-user-id="${user.id}" ${isSelf ? 'disabled title="Cannot delete yourself"' : ''}>
+                Delete
+            </button>
+        </td>
+    `;
+
+    return row;
+}
+
+/**
+ * Open create user modal
+ */
+function openCreateUserModal() {
+    const modal = document.getElementById('user-modal');
+    const title = document.getElementById('user-modal-title');
+    const submitBtn = document.getElementById('user-form-submit');
+    const form = document.getElementById('user-form');
+    const disabledGroup = document.getElementById('user-form-disabled-group');
+    const usernameInput = document.getElementById('user-form-username');
+
+    // Reset form
+    form.reset();
+    document.getElementById('user-form-id').value = '';
+    disabledGroup.style.display = 'none';
+
+    // Enable username field
+    if (usernameInput) {
+        usernameInput.disabled = false;
+    }
+
+    // Set modal title and button text
+    title.textContent = 'Create New User';
+    submitBtn.textContent = 'Create User';
+
+    // Make password required for new users
+    document.getElementById('user-form-password').required = true;
+    document.getElementById('user-form-password-confirm').required = true;
+    document.getElementById('user-form-password').placeholder = '';
+
+    modal.style.display = 'flex';
+}
+
+/**
+ * Open edit user modal
+ */
+async function openEditUserModal(userId) {
+    const modal = document.getElementById('user-modal');
+    const title = document.getElementById('user-modal-title');
+    const submitBtn = document.getElementById('user-form-submit');
+    const form = document.getElementById('user-form');
+    const disabledGroup = document.getElementById('user-form-disabled-group');
+    const usernameInput = document.getElementById('user-form-username');
+
+    try {
+        // Fetch user details
+        const response = await apiFetch(`/api/users`);
+        const users = await response.json();
+        const user = users.find(u => u.id === userId);
+
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        // Populate form
+        document.getElementById('user-form-id').value = user.id;
+        document.getElementById('user-form-username').value = user.username;
+        document.getElementById('user-form-is-admin').checked = user.is_admin;
+        document.getElementById('user-form-is-disabled').checked = user.is_disabled;
+
+        // Disable username field (cannot change username)
+        if (usernameInput) {
+            usernameInput.disabled = true;
+        }
+
+        // Password optional for edit
+        document.getElementById('user-form-password').required = false;
+        document.getElementById('user-form-password-confirm').required = false;
+        document.getElementById('user-form-password').placeholder = 'Leave blank to keep current password';
+
+        // Show disabled checkbox
+        disabledGroup.style.display = 'block';
+
+        // Set modal title and button text
+        title.textContent = `Edit User: ${user.username}`;
+        submitBtn.textContent = 'Save Changes';
+
+        modal.style.display = 'flex';
+    } catch (error) {
+        console.error('Error loading user:', error);
+        showToast('Failed to load user details', 'error');
+    }
+}
+
+/**
+ * Handle user form submission (create or update)
+ */
+async function handleUserFormSubmit(e) {
+    e.preventDefault();
+
+    const userId = document.getElementById('user-form-id').value;
+    const username = document.getElementById('user-form-username').value.trim();
+    const password = document.getElementById('user-form-password').value;
+    const passwordConfirm = document.getElementById('user-form-password-confirm').value;
+    const isAdmin = document.getElementById('user-form-is-admin').checked;
+    const isDisabled = document.getElementById('user-form-is-disabled').checked;
+
+    // Validation
+    if (userId === '' && password !== passwordConfirm) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+
+    if (userId !== '' && password && password !== passwordConfirm) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+
+    const submitBtn = document.getElementById('user-form-submit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving...';
+
+    try {
+        let response;
+
+        if (userId === '') {
+            // Create new user
+            response = await apiFetch('/api/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password, is_admin: isAdmin })
+            });
+        } else {
+            // Update existing user
+            const updateData = { is_admin: isAdmin, is_disabled: isDisabled };
+            if (password) {
+                updateData.password = password;
+            }
+
+            response = await apiFetch(`/api/users/${userId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updateData)
+            });
+        }
+
+        if (response.ok) {
+            showToast(userId ? 'User updated successfully' : 'User created successfully', 'success');
+            closeUserModal();
+            loadUsers(); // Refresh users list
+        } else {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to save user');
+        }
+    } catch (error) {
+        console.error('Error saving user:', error);
+        showToast(error.message, 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = userId ? 'Save Changes' : 'Create User';
+    }
+}
+
+/**
+ * Close user modal
+ */
+function closeUserModal() {
+    const modal = document.getElementById('user-modal');
+    const usernameInput = document.getElementById('user-form-username');
+    modal.style.display = 'none';
+    document.getElementById('user-form').reset();
+    if (usernameInput) {
+        usernameInput.disabled = false;
+    }
+}
+
+/**
+ * Open delete user confirmation modal
+ */
+function openDeleteUserModal(userId) {
+    // Find user in table
+    const row = document.querySelector(`tr[data-user-id="${userId}"]`);
+    if (!row) return;
+
+    const username = row.querySelector('strong').textContent;
+
+    document.getElementById('delete-user-username').textContent = username;
+    document.getElementById('delete-user-confirm').dataset.userId = userId;
+    document.getElementById('delete-user-modal').style.display = 'flex';
+}
+
+/**
+ * Handle user deletion
+ */
+async function handleDeleteUser() {
+    const userId = document.getElementById('delete-user-confirm').dataset.userId;
+    const confirmBtn = document.getElementById('delete-user-confirm');
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Deleting...';
+
+    try {
+        const response = await apiFetch(`/api/users/${userId}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            showToast('User deleted successfully', 'success');
+            closeDeleteUserModal();
+            loadUsers(); // Refresh users list
+        } else {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to delete user');
+        }
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        showToast(error.message, 'error');
+    } finally {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Delete User';
+    }
+}
+
+/**
+ * Close delete user modal
+ */
+function closeDeleteUserModal() {
+    document.getElementById('delete-user-modal').style.display = 'none';
+}
+
+/**
+ * Load admin settings tab
+ * Initializes user management and subsection tabs
+ */
+function loadAdminSettingsTab() {
+    console.log('Loading admin settings tab...');
+
+    // Load user management by default
+    loadUsers();
+
+    // Initialize subsection tabs
+    initSubsectionTabs();
+}
+
+/**
+ * Initialize subsection tabs (for System & Security Management)
+ */
+function initSubsectionTabs() {
+    const subsectionButtons = document.querySelectorAll('.subsection-tab');
+
+    subsectionButtons.forEach(button => {
+        // Remove any existing listeners to prevent duplicates
+        const newButton = button.cloneNode(true);
+        button.parentNode.replaceChild(newButton, button);
+
+        newButton.addEventListener('click', () => {
+            const subsectionName = newButton.dataset.subsection;
+            const parentSection = newButton.closest('section');
+
+            // Remove active from all tabs in this section
+            parentSection.querySelectorAll('.subsection-tab').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            newButton.classList.add('active');
+
+            // Hide all subsections in this section
+            parentSection.querySelectorAll('.subsection-content').forEach(content => {
+                content.classList.remove('active');
+            });
+
+            // Show target subsection
+            const targetSubsection = parentSection.querySelector(`#${subsectionName}-subsection`);
+            if (targetSubsection) {
+                targetSubsection.classList.add('active');
+
+                // Load subsection-specific data
+                loadSubsectionData(subsectionName);
+            }
+        });
+    });
+}
+
+/**
+ * Load data for specific subsection
+ */
+function loadSubsectionData(subsectionName) {
+    switch(subsectionName) {
+        case 'database':
+            loadDatabaseStats();
+            break;
+        case 'logs':
+            loadAuditLogs();
+            break;
+        case 'cleanup':
+            // Cleanup already has event listeners
+            console.log('Cleanup subsection selected');
+            break;
+        case 'failed-logins':
+            loadFailedLogins();
+            break;
+        case 'sessions':
+            loadActiveSessions();
+            break;
+    }
+}
+
+/**
+ * Load database statistics
+ */
+async function loadDatabaseStats() {
+    try {
+        const response = await apiFetch('/api/admin/database/stats');
+        if (!response.ok) {
+            throw new Error('Failed to load database stats');
+        }
+
+        const stats = await response.json();
+        const container = document.getElementById('database-stats');
+        if (!container) return;
+
+        container.innerHTML = `
+            <div class="stat-card">
+                <div class="stat-label">Database Size</div>
+                <div class="stat-value">${stats.database_size_mb} MB</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Users</div>
+                <div class="stat-value">${stats.users}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Downloads</div>
+                <div class="stat-value">${stats.downloads}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Conversions</div>
+                <div class="stat-value">${stats.conversions}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Audit Logs</div>
+                <div class="stat-value">${stats.audit_logs}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Login History</div>
+                <div class="stat-value">${stats.user_login_history}</div>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error loading database stats:', error);
+        showToast('Failed to load database stats', 'error');
+    }
+}
+
+/**
+ * Handle database backup button click
+ */
+async function handleDatabaseBackup() {
+    const btn = document.getElementById('database-backup-btn');
+    if (!btn) return;
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Creating Backup...';
+
+    try {
+        const response = await apiFetch('/api/admin/database/backup', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to create backup');
+        }
+
+        const result = await response.json();
+        showToast(`Backup created: ${result.filename} (${result.size_mb} MB)`, 'success');
+    } catch (error) {
+        console.error('Error creating backup:', error);
+        showToast('Failed to create database backup', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+/**
+ * Handle database VACUUM
+ */
+async function handleDatabaseVacuum() {
+    const btn = document.getElementById('database-vacuum-btn');
+    if (!btn) return;
+
+    if (!confirm('VACUUM will rebuild the database file to reclaim space. This may take a few moments. Continue?')) {
+        return;
+    }
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Running VACUUM...';
+
+    try {
+        const response = await apiFetch('/api/admin/database/vacuum', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to VACUUM database');
+        }
+
+        const result = await response.json();
+        showToast(`Database VACUUM completed. New size: ${result.new_size_mb} MB`, 'success');
+
+        // Reload stats to show new size
+        loadDatabaseStats();
+    } catch (error) {
+        console.error('Error running VACUUM:', error);
+        showToast('Failed to VACUUM database', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+/**
+ * Handle database OPTIMIZE
+ */
+async function handleDatabaseOptimize() {
+    const btn = document.getElementById('database-optimize-btn');
+    if (!btn) return;
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Optimizing...';
+
+    try {
+        const response = await apiFetch('/api/admin/database/optimize', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to optimize database');
+        }
+
+        const result = await response.json();
+        showToast(result.message, 'success');
+    } catch (error) {
+        console.error('Error optimizing database:', error);
+        showToast('Failed to optimize database', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+/**
+ * Handle database integrity check
+ */
+async function handleDatabaseIntegrityCheck() {
+    const btn = document.getElementById('database-integrity-btn');
+    if (!btn) return;
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+
+    try {
+        const response = await apiFetch('/api/admin/database/integrity-check', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to check database integrity');
+        }
+
+        const result = await response.json();
+
+        if (result.status === 'ok') {
+            showToast(result.message, 'success');
+        } else {
+            showToast(`${result.message}: ${result.details.join(', ')}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error checking database integrity:', error);
+        showToast('Failed to check database integrity', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+/**
+ * Load available backups
+ */
+async function loadBackups() {
+    const container = document.getElementById('backups-list-container');
+    const loadBtn = document.getElementById('load-backups-btn');
+    const restoreBtn = document.getElementById('restore-backup-btn');
+
+    if (!container) return;
+
+    container.innerHTML = '<p class="loading-state">Loading backups...</p>';
+    if (loadBtn) loadBtn.disabled = true;
+
+    try {
+        const response = await apiFetch('/api/admin/database/backups');
+        if (!response.ok) {
+            throw new Error('Failed to load backups');
+        }
+
+        const data = await response.json();
+
+        if (data.backups.length === 0) {
+            container.innerHTML = '<p class="empty-state">No backup files found</p>';
+            if (restoreBtn) restoreBtn.disabled = true;
+            return;
+        }
+
+        let html = '<div class="backups-list">';
+
+        data.backups.forEach(backup => {
+            const created = new Date(backup.created_at).toLocaleString();
+            const typeColor = backup.type === 'Safety Backup' ? '#ffa500' : '#00ff88';
+            html += `
+                <div class="backup-item">
+                    <div style="display: flex; align-items: center; gap: 1rem; flex: 1;">
+                        <input type="radio" name="backup-select" value="${backup.filename}" id="backup-${backup.filename}">
+                        <label for="backup-${backup.filename}" style="cursor: pointer; flex: 1;">
+                            <strong>${backup.filename}</strong>
+                            <span style="color: ${typeColor}; font-size: 0.75rem; margin-left: 0.5rem;">(${backup.type})</span><br>
+                            <small style="color: var(--text-muted);">
+                                Created: ${created} | Size: ${backup.size_mb} MB
+                            </small>
+                        </label>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-left: auto;">
+                        <button class="btn btn-small btn-primary download-backup-btn" data-filename="${backup.filename}"
+                                title="Download this backup">
+                            📥 Download
+                        </button>
+                        <button class="btn btn-small btn-danger delete-backup-btn" data-filename="${backup.filename}"
+                                title="Delete this backup">
+                            🗑️ Delete
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+
+        // Enable restore button when a backup is selected
+        const radioButtons = container.querySelectorAll('input[name="backup-select"]');
+        radioButtons.forEach(radio => {
+            radio.addEventListener('change', () => {
+                if (restoreBtn) restoreBtn.disabled = false;
+            });
+        });
+
+        // Add event listeners to download buttons
+        const downloadButtons = container.querySelectorAll('.download-backup-btn');
+        downloadButtons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const filename = btn.dataset.filename;
+                handleDownloadBackup(filename);
+            });
+        });
+
+        // Add event listeners to delete buttons
+        const deleteButtons = container.querySelectorAll('.delete-backup-btn');
+        deleteButtons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const filename = btn.dataset.filename;
+                handleDeleteBackup(filename);
+            });
+        });
+
+    } catch (error) {
+        console.error('Error loading backups:', error);
+        container.innerHTML = '<p class="empty-state" style="color: var(--danger);">Failed to load backups</p>';
+    } finally {
+        if (loadBtn) loadBtn.disabled = false;
+    }
+}
+
+/**
+ * Handle restore from backup
+ */
+async function handleRestoreBackup() {
+    const selectedRadio = document.querySelector('input[name="backup-select"]:checked');
+    if (!selectedRadio) {
+        showToast('Please select a backup to restore', 'error');
+        return;
+    }
+
+    const backupFilename = selectedRadio.value;
+
+    const confirmed = confirm(
+        `⚠️ WARNING: This will restore the database from:\n\n${backupFilename}\n\n` +
+        `ALL CURRENT DATA WILL BE REPLACED!\n\n` +
+        `A safety backup of the current database will be created automatically.\n\n` +
+        `Are you absolutely sure you want to continue?`
+    );
+
+    if (!confirmed) return;
+
+    const restoreBtn = document.getElementById('restore-backup-btn');
+    if (!restoreBtn) return;
+
+    const originalText = restoreBtn.textContent;
+    restoreBtn.disabled = true;
+    restoreBtn.textContent = 'Restoring...';
+
+    try {
+        const response = await apiFetch(`/api/admin/database/restore?backup_filename=${encodeURIComponent(backupFilename)}`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to restore backup');
+        }
+
+        const result = await response.json();
+        showToast(
+            `Database restored successfully from ${result.backup_filename}. Safety backup saved as ${result.safety_backup}`,
+            'success'
+        );
+
+        // Reload stats and clear backup selection
+        loadDatabaseStats();
+        loadBackups();
+    } catch (error) {
+        console.error('Error restoring backup:', error);
+        showToast(`Failed to restore backup: ${error.message}`, 'error');
+    } finally {
+        restoreBtn.disabled = false;
+        restoreBtn.textContent = originalText;
+    }
+}
+
+/**
+ * Handle delete backup
+ */
+async function handleDeleteBackup(backupFilename) {
+    if (!backupFilename) {
+        showToast('Invalid backup filename', 'error');
+        return;
+    }
+
+    const confirmed = confirm(
+        `Are you sure you want to delete this backup?\n\n${backupFilename}\n\n` +
+        `This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+        // Extract just the filename part after backups/
+        const filename = backupFilename.replace('backups/', '');
+
+        const response = await apiFetch(`/api/admin/database/backups/${encodeURIComponent(filename)}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to delete backup');
+        }
+
+        const result = await response.json();
+        showToast(result.message, 'success');
+
+        // Reload backups list
+        loadBackups();
+    } catch (error) {
+        console.error('Error deleting backup:', error);
+        showToast(`Failed to delete backup: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Handle download backup
+ */
+async function handleDownloadBackup(backupFilename) {
+    if (!backupFilename) {
+        showToast('Invalid backup filename', 'error');
+        return;
+    }
+
+    try {
+        // Extract just the filename part after backups/
+        const filename = backupFilename.replace('backups/', '');
+
+        // Use apiFetch to download the file with auth
+        const response = await apiFetch(`/api/admin/database/backups/${encodeURIComponent(filename)}/download`);
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to download backup');
+        }
+
+        // Get the blob from the response
+        const blob = await response.blob();
+
+        // Create a temporary download link
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+
+        // Cleanup
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        showToast('Backup downloaded successfully', 'success');
+    } catch (error) {
+        console.error('Error downloading backup:', error);
+        showToast(`Failed to download backup: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Load audit logs
+ */
+async function loadAuditLogs() {
+    const container = document.getElementById('audit-logs-container');
+    if (!container) return;
+
+    container.innerHTML = '<p class="loading-state">Loading audit logs...</p>';
+
+    try {
+        const response = await apiFetch('/api/admin/audit-logs?limit=50');
+        if (!response.ok) {
+            throw new Error('Failed to load audit logs');
+        }
+
+        const data = await response.json();
+
+        if (data.logs.length === 0) {
+            container.innerHTML = '<p class="empty-state">No audit logs found</p>';
+            return;
+        }
+
+        let tableHTML = `
+            <table class="users-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Event Type</th>
+                        <th>Username</th>
+                        <th>IP Address</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        data.logs.forEach(log => {
+            const timestamp = new Date(log.timestamp).toLocaleString();
+            const details = log.details ? JSON.stringify(log.details, null, 2) : 'N/A';
+
+            tableHTML += `
+                <tr>
+                    <td>${timestamp}</td>
+                    <td><span class="badge badge-primary">${log.event_type}</span></td>
+                    <td>${log.username || 'N/A'}</td>
+                    <td>${log.ip_address}</td>
+                    <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="${details}">${details.substring(0, 50)}...</td>
+                </tr>
+            `;
+        });
+
+        tableHTML += '</tbody></table>';
+        container.innerHTML = tableHTML;
+    } catch (error) {
+        console.error('Error loading audit logs:', error);
+        container.innerHTML = '<p class="empty-state" style="color: var(--danger);">Failed to load audit logs</p>';
+    }
+}
+
+/**
+ * Load failed login attempts
+ */
+async function loadFailedLogins() {
+    const container = document.getElementById('failed-logins-container');
+    if (!container) return;
+
+    container.innerHTML = '<p class="loading-state">Loading failed login attempts...</p>';
+
+    try {
+        const response = await apiFetch('/api/admin/failed-logins?limit=50');
+        if (!response.ok) {
+            throw new Error('Failed to load failed logins');
+        }
+
+        const data = await response.json();
+
+        if (data.failed_attempts.length === 0) {
+            container.innerHTML = '<p class="empty-state">No failed login attempts found</p>';
+            return;
+        }
+
+        let tableHTML = `
+            <table class="users-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>IP Address</th>
+                        <th>Attempt Time</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        data.failed_attempts.forEach(attempt => {
+            const timestamp = new Date(attempt.attempt_time).toLocaleString();
+            const statusBadge = attempt.is_locked
+                ? '<span class="badge badge-danger">Locked</span>'
+                : '<span class="badge badge-secondary">Failed</span>';
+
+            tableHTML += `
+                <tr>
+                    <td><strong>${attempt.username}</strong></td>
+                    <td>${attempt.ip_address}</td>
+                    <td>${timestamp}</td>
+                    <td>${statusBadge}</td>
+                </tr>
+            `;
+        });
+
+        tableHTML += '</tbody></table>';
+        container.innerHTML = tableHTML;
+    } catch (error) {
+        console.error('Error loading failed logins:', error);
+        container.innerHTML = '<p class="empty-state" style="color: var(--danger);">Failed to load failed login attempts</p>';
+    }
+}
+
+/**
+ * Load active sessions
+ */
+async function loadActiveSessions() {
+    const container = document.getElementById('sessions-container');
+    if (!container) return;
+
+    container.innerHTML = '<p class="loading-state">Loading active sessions...</p>';
+
+    try {
+        const response = await apiFetch('/api/admin/sessions');
+        if (!response.ok) {
+            throw new Error('Failed to load sessions');
+        }
+
+        const data = await response.json();
+
+        if (data.sessions.length === 0) {
+            container.innerHTML = '<p class="empty-state">No active sessions found</p>';
+            return;
+        }
+
+        let tableHTML = `
+            <p style="color: var(--text-muted); margin-bottom: 1rem; font-style: italic;">${data.note}</p>
+            <table class="users-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>IP Address</th>
+                        <th>Login Time</th>
+                        <th>User Agent</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        data.sessions.forEach(session => {
+            const timestamp = new Date(session.login_time).toLocaleString();
+            const roleBadge = session.is_admin
+                ? '<span class="badge badge-primary">Admin</span>'
+                : '<span class="badge badge-secondary">User</span>';
+
+            tableHTML += `
+                <tr>
+                    <td><strong>${session.username}</strong></td>
+                    <td>${roleBadge}</td>
+                    <td>${session.ip_address}</td>
+                    <td>${timestamp}</td>
+                    <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${session.user_agent || 'N/A'}">${session.user_agent || 'N/A'}</td>
+                </tr>
+            `;
+        });
+
+        tableHTML += '</tbody></table>';
+        container.innerHTML = tableHTML;
+    } catch (error) {
+        console.error('Error loading sessions:', error);
+        container.innerHTML = '<p class="empty-state" style="color: var(--danger);">Failed to load active sessions</p>';
+    }
+}
+
 /**
  * Poll for conversion progress continuously (not just when Tools tab is active)
  * This ensures active conversions are tracked and displayed in real-time
@@ -3938,6 +4949,120 @@ document.addEventListener('DOMContentLoaded', async () => {
             await AUTH.logout();
         }
     });
+
+    // User Management Event Listeners
+    const createUserBtn = document.getElementById('create-user-btn');
+    if (createUserBtn) {
+        createUserBtn.addEventListener('click', openCreateUserModal);
+    }
+
+    const userForm = document.getElementById('user-form');
+    if (userForm) {
+        userForm.addEventListener('submit', handleUserFormSubmit);
+    }
+
+    const userFormCancel = document.getElementById('user-form-cancel');
+    if (userFormCancel) {
+        userFormCancel.addEventListener('click', closeUserModal);
+    }
+
+    const userModalClose = document.getElementById('user-modal-close');
+    if (userModalClose) {
+        userModalClose.addEventListener('click', closeUserModal);
+    }
+
+    const deleteUserCancel = document.getElementById('delete-user-cancel');
+    if (deleteUserCancel) {
+        deleteUserCancel.addEventListener('click', closeDeleteUserModal);
+    }
+
+    const deleteUserModalClose = document.getElementById('delete-user-modal-close');
+    if (deleteUserModalClose) {
+        deleteUserModalClose.addEventListener('click', closeDeleteUserModal);
+    }
+
+    const deleteUserConfirm = document.getElementById('delete-user-confirm');
+    if (deleteUserConfirm) {
+        deleteUserConfirm.addEventListener('click', handleDeleteUser);
+    }
+
+    // Delegate edit/delete button clicks (for dynamically created buttons)
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('edit-user-btn')) {
+            const userId = e.target.dataset.userId;
+            openEditUserModal(userId);
+        }
+
+        if (e.target.classList.contains('delete-user-btn')) {
+            const userId = e.target.dataset.userId;
+            openDeleteUserModal(userId);
+        }
+    });
+
+    // Close modals on escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const userModal = document.getElementById('user-modal');
+            const deleteModal = document.getElementById('delete-user-modal');
+
+            if (userModal && userModal.style.display === 'flex') {
+                closeUserModal();
+            }
+            if (deleteModal && deleteModal.style.display === 'flex') {
+                closeDeleteUserModal();
+            }
+        }
+    });
+
+    // Close modals when clicking outside
+    const userModal = document.getElementById('user-modal');
+    if (userModal) {
+        userModal.addEventListener('click', (e) => {
+            if (e.target.id === 'user-modal') {
+                closeUserModal();
+            }
+        });
+    }
+
+    const deleteUserModal = document.getElementById('delete-user-modal');
+    if (deleteUserModal) {
+        deleteUserModal.addEventListener('click', (e) => {
+            if (e.target.id === 'delete-user-modal') {
+                closeDeleteUserModal();
+            }
+        });
+    }
+
+    // Database management buttons
+    const databaseBackupBtn = document.getElementById('database-backup-btn');
+    if (databaseBackupBtn) {
+        databaseBackupBtn.addEventListener('click', handleDatabaseBackup);
+    }
+
+    const databaseVacuumBtn = document.getElementById('database-vacuum-btn');
+    if (databaseVacuumBtn) {
+        databaseVacuumBtn.addEventListener('click', handleDatabaseVacuum);
+    }
+
+    const databaseOptimizeBtn = document.getElementById('database-optimize-btn');
+    if (databaseOptimizeBtn) {
+        databaseOptimizeBtn.addEventListener('click', handleDatabaseOptimize);
+    }
+
+    const databaseIntegrityBtn = document.getElementById('database-integrity-btn');
+    if (databaseIntegrityBtn) {
+        databaseIntegrityBtn.addEventListener('click', handleDatabaseIntegrityCheck);
+    }
+
+    const loadBackupsBtn = document.getElementById('load-backups-btn');
+    if (loadBackupsBtn) {
+        loadBackupsBtn.addEventListener('click', loadBackups);
+    }
+
+    const restoreBackupBtn = document.getElementById('restore-backup-btn');
+    if (restoreBackupBtn) {
+        restoreBackupBtn.addEventListener('click', handleRestoreBackup);
+    }
 
     // Close help modal on escape key
     document.addEventListener('keydown', (e) => {
