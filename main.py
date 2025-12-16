@@ -2316,7 +2316,14 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return payload
+    # SECURITY: Return is_admin from DATABASE, not from JWT payload
+    # This prevents privilege escalation if JWT is forged or user is demoted
+    return {
+        "sub": user.id,
+        "user_id": user.id,
+        "username": user.username,
+        "is_admin": user.is_admin  # Always from database, never from JWT
+    }
 
 
 async def get_current_admin_user(
@@ -3010,25 +3017,14 @@ async def root(request: Request):
         with open("assets/index.html") as f:
             return HTMLResponse(content=f.read())
 
-    # Auth is enabled - check for token
-    # Try to get token from Authorization header first
-    auth_header = request.headers.get('authorization', '')
-    token = None
-
-    if auth_header.startswith('Bearer '):
-        token = auth_header.split(' ')[1]
-
-    if token:
-        # Validate token
-        with get_db() as db_context:
-            payload = JWTService.decode_token(token, db_context, admin_settings)
-            if payload:
-                # Valid token - serve main page
-                with open("assets/index.html") as f:
-                    return HTMLResponse(content=f.read())
-
-    # No valid token - redirect to login
-    return RedirectResponse(url='/assets/login.html')
+    # Auth is enabled - serve main page and let frontend JavaScript handle auth check
+    # The frontend will call /api/auth/me to verify the token and redirect to login if needed
+    # This approach works because:
+    # 1. Backend cannot access localStorage where token is stored
+    # 2. Frontend checkAuth() will validate token and redirect if invalid
+    # 3. All API endpoints are protected, so even if someone bypasses frontend, they can't access data
+    with open("assets/index.html") as f:
+        return HTMLResponse(content=f.read())
 
 
 @app.get("/favicon.ico")

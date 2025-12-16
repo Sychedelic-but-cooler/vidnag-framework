@@ -877,20 +877,19 @@
 
                 if (response.ok) {
                     // Show success message
-                    showSuccess('Admin account created successfully! Switching to login...');
+                    showSuccess('Admin account created successfully! Logging you in...');
                     authButton.innerHTML = '✓ Success!';
                     authButton.style.background = 'linear-gradient(135deg, #00ff88, #00cc66)';
 
-                    // Switch to login mode after short delay
-                    setTimeout(() => {
+                    // Auto-login with the same credentials after short delay
+                    setTimeout(async () => {
                         isSetupMode = false;
                         configureLoginMode();
-                        form.reset();
-                        authButton.disabled = false;
-                        authButton.classList.remove('loading');
-                        authButton.style.background = '';
                         successMessage.classList.remove('show');
-                    }, 2000);
+
+                        // Automatically login with the credentials that were just created
+                        await handleLogin(username, password);
+                    }, 1500);
                 } else {
                     showError(data.detail || 'Failed to create admin account');
                     resetButton();
@@ -920,10 +919,8 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    // Store auth data
+                    // Store only the JWT token (username and is_admin are fetched from backend)
                     localStorage.setItem('auth_token', data.access_token);
-                    localStorage.setItem('username', data.username);
-                    localStorage.setItem('is_admin', data.is_admin);
 
                     // Show success animation
                     authButton.innerHTML = '✓ Success!';

@@ -11,23 +11,46 @@
     <div class="container">
         <header>
             <div class="header-content">
-                <img src="/assets/logo.svg" alt="Vidnag Framework Logo" class="logo logo-svg" onerror="this.onerror=null; this.src='/assets/logo.png'; this.classList.remove('logo-svg');">
-                <div class="header-text">
+                <div class="header-left">
+                    <img src="/assets/logo.svg" alt="Vidnag Framework Logo" class="logo logo-svg" onerror="this.onerror=null; this.src='/assets/logo.png'; this.classList.remove('logo-svg');">
                     <h1>Vidnag Framework</h1>
-                    <p class="subtitle">Download videos using yt-dlp</p>
+                </div>
+                <div class="header-icons">
+                    <button class="icon-button" id="user-icon-btn" title="User profile">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                    </button>
+                    <button class="icon-button tab-button" data-tab="settings" title="Settings">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"></path>
+                        </svg>
+                    </button>
+                    <button class="icon-button" id="help-modal-btn" title="Keyboard shortcuts and tips">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                    </button>
+                    <button class="icon-button" id="logout-btn" title="Logout">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                            <polyline points="16 17 21 12 16 7"></polyline>
+                            <line x1="21" y1="12" x2="9" y2="12"></line>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </header>
 
         <div class="tabs">
-            <button class="tab-button active" data-tab="downloads">Video Downloaders</button>
+            <button class="tab-button active" data-tab="downloads">Video Downloads</button>
             <button class="tab-button" data-tab="tools">Video Tools</button>
             <button class="tab-button" data-tab="files">File Browser</button>
-            <button class="tab-button" data-tab="settings">Settings</button>
             <button class="tab-button" data-tab="logs">Logs</button>
-            <button class="help-button" id="help-modal-btn" title="Keyboard shortcuts and tips">
-                <span style="font-size: 1.2rem;">?</span> Help
-            </button>
         </div>
 
         <!-- Downloads Tab -->

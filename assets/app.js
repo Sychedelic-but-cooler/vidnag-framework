@@ -21,7 +21,21 @@ let domainMappings = {};
  * Authentication Management
  * Handles JWT token storage, retrieval, and logout functionality
  */
+
+// MIGRATION: Clean up old localStorage entries from previous versions
+// These are no longer used for security reasons (prevent privilege escalation)
+if (localStorage.getItem('username')) {
+    localStorage.removeItem('username');
+}
+if (localStorage.getItem('is_admin')) {
+    localStorage.removeItem('is_admin');
+}
+
 const AUTH = {
+    // SECURITY: Store user info in memory only (not localStorage)
+    // This prevents users from editing is_admin to gain privileges
+    _userInfo: null,
+
     /**
      * Get stored JWT token
      * @returns {string|null} JWT token or null if not authenticated
@@ -31,31 +45,45 @@ const AUTH = {
     },
 
     /**
-     * Get stored username
+     * Get stored username from memory
      * @returns {string|null} Username or null if not authenticated
      */
     getUsername() {
-        return localStorage.getItem('username');
+        return this._userInfo?.username || null;
     },
 
     /**
-     * Check if current user is admin
+     * Check if current user is admin from memory
      * @returns {boolean} True if user is admin
      */
     isAdmin() {
-        return localStorage.getItem('is_admin') === 'true';
+        return this._userInfo?.is_admin === true;
+    },
+
+    /**
+     * Get user ID from memory
+     * @returns {string|null} User ID or null if not authenticated
+     */
+    getUserId() {
+        return this._userInfo?.user_id || null;
     },
 
     /**
      * Store authentication data after successful login
+     * SECURITY: Only stores token in localStorage
+     * User info is stored in memory and fetched from backend
      * @param {string} token - JWT access token
-     * @param {string} username - Username
-     * @param {boolean} isAdmin - Whether user has admin privileges
      */
-    setAuth(token, username, isAdmin) {
+    setAuth(token) {
         localStorage.setItem('auth_token', token);
-        localStorage.setItem('username', username);
-        localStorage.setItem('is_admin', isAdmin.toString());
+    },
+
+    /**
+     * Store user info in memory (called after /api/auth/me response)
+     * @param {object} userInfo - User info from backend
+     */
+    setUserInfo(userInfo) {
+        this._userInfo = userInfo;
     },
 
     /**
@@ -63,8 +91,7 @@ const AUTH = {
      */
     clearAuth() {
         localStorage.removeItem('auth_token');
-        localStorage.removeItem('username');
-        localStorage.removeItem('is_admin');
+        this._userInfo = null;
     },
 
     /**
@@ -153,6 +180,11 @@ async function checkAuth() {
         if (statusData.auth_enabled === false) {
             // Authentication is explicitly disabled - allow access
             console.log('Authentication is disabled');
+            // Hide logout button when auth is disabled
+            const logoutBtn = document.getElementById('logout-btn');
+            if (logoutBtn) {
+                logoutBtn.style.display = 'none';
+            }
             return;
         }
 
@@ -175,8 +207,15 @@ async function checkAuth() {
             return;
         }
 
-        // Token valid - display user info
+        // Token valid - store user info in memory and display
         const userData = await response.json();
+        AUTH.setUserInfo(userData);
+
+        // Show logout button when authenticated
+        const logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) {
+            logoutBtn.style.display = 'flex';
+        }
         displayUserInfo(userData);
     } catch (error) {
         console.error('Auth check error:', error);
@@ -218,7 +257,7 @@ function displayUserInfo(userData) {
         border-radius: 12px;
     `;
 
-    // Username with admin badge
+    // Username with admin badge (no logout button - using icon button instead)
     const usernameSpan = document.createElement('span');
     usernameSpan.style.cssText = `
         color: var(--text-light);
@@ -242,37 +281,15 @@ function displayUserInfo(userData) {
         usernameSpan.appendChild(adminBadge);
     }
 
-    // Logout button
-    const logoutBtn = document.createElement('button');
-    logoutBtn.textContent = 'Logout';
-    logoutBtn.style.cssText = `
-        padding: 0.375rem 0.875rem;
-        background: rgba(255, 68, 68, 0.2);
-        border: 1px solid rgba(255, 68, 68, 0.3);
-        border-radius: 8px;
-        color: var(--danger);
-        font-size: 0.85rem;
-        font-weight: 500;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    `;
-    logoutBtn.addEventListener('mouseenter', () => {
-        logoutBtn.style.background = 'rgba(255, 68, 68, 0.3)';
-        logoutBtn.style.borderColor = 'var(--danger)';
-    });
-    logoutBtn.addEventListener('mouseleave', () => {
-        logoutBtn.style.background = 'rgba(255, 68, 68, 0.2)';
-        logoutBtn.style.borderColor = 'rgba(255, 68, 68, 0.3)';
-    });
-    logoutBtn.addEventListener('click', () => {
-        if (confirm('Are you sure you want to logout?')) {
-            AUTH.logout();
-        }
-    });
-
     userInfoContainer.appendChild(usernameSpan);
-    userInfoContainer.appendChild(logoutBtn);
-    header.appendChild(userInfoContainer);
+
+    // Insert before the header-icons div (so username appears between logo and icons)
+    const headerIcons = header.querySelector('.header-icons');
+    if (headerIcons) {
+        header.insertBefore(userInfoContainer, headerIcons);
+    } else {
+        header.appendChild(userInfoContainer);
+    }
 }
 
 /**
@@ -3914,6 +3931,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Help modal
     document.getElementById('help-modal-btn').addEventListener('click', openHelpModal);
     document.getElementById('help-modal-close').addEventListener('click', closeHelpModal);
+
+    // Logout button
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+        if (confirm('Are you sure you want to logout?')) {
+            await AUTH.logout();
+        }
+    });
 
     // Close help modal on escape key
     document.addEventListener('keydown', (e) => {

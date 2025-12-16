@@ -79,6 +79,8 @@ DEFAULT_ADMIN_SETTINGS = {
             "/",
             "/favicon.ico",
             "/api/auth/login",
+            "/api/auth/setup",
+            "/api/auth/check-setup",
             "/api/auth/status",
             "/assets/*"
         ],
@@ -193,11 +195,20 @@ class AdminSettings:
                 )
                 return DEFAULT_ADMIN_SETTINGS.copy()
         else:
-            logger.warning(
-                f"{ADMIN_SETTINGS_FILE} not found. Using default restrictive settings. "
-                f"For production deployment, create {ADMIN_SETTINGS_FILE} with appropriate configuration."
+            # File doesn't exist - create it with defaults
+            logger.info(
+                f"{ADMIN_SETTINGS_FILE} not found. Creating with default settings..."
             )
-            self._log_template()
+            try:
+                with open(ADMIN_SETTINGS_FILE, 'w') as f:
+                    json.dump(DEFAULT_ADMIN_SETTINGS, f, indent=2)
+                logger.info(
+                    f"Created {ADMIN_SETTINGS_FILE} with default configuration. "
+                    f"Authentication is disabled by default. "
+                    f"Edit this file to customize settings."
+                )
+            except Exception as e:
+                logger.error(f"Failed to create {ADMIN_SETTINGS_FILE}: {e}. Using defaults in-memory only.")
             return DEFAULT_ADMIN_SETTINGS.copy()
 
     def _deep_merge(self, base: Dict, override: Dict) -> Dict:
