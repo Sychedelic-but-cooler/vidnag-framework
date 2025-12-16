@@ -527,8 +527,6 @@
                 <div class="subsection-tabs">
                     <button class="subsection-tab active" data-subsection="cleanup">Cleanup</button>
                     <button class="subsection-tab" data-subsection="database">Database</button>
-                    <button class="subsection-tab" data-subsection="logs">System Logs</button>
-                    <button class="subsection-tab" data-subsection="app-config">App Config</button>
                 </div>
 
                 <!-- Cleanup Subsection (moved from Settings) -->
@@ -628,19 +626,22 @@
                         </div>
                     </div>
                 </div>
+            </section>
 
-                <!-- Logs Subsection -->
-                <div id="logs-subsection" class="subsection-content">
-                    <h3>System Logs & Audit Trail</h3>
-                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">View system logs and user activity audit trail.</p>
+            <!-- Security Management Section -->
+            <section class="security-management glass-card">
+                <h2>🔒 Security Management</h2>
 
-                    <div id="audit-logs-container">
-                        <!-- Audit logs populated by JavaScript -->
-                    </div>
+                <!-- Subsection Tabs -->
+                <div class="subsection-tabs">
+                    <button class="subsection-tab active" data-subsection="app-config">App Config</button>
+                    <button class="subsection-tab" data-subsection="authentication">Authentication</button>
+                    <button class="subsection-tab" data-subsection="security-config">Security Config</button>
+                    <button class="subsection-tab" data-subsection="audit-log">Audit Log</button>
                 </div>
 
                 <!-- App Config Subsection -->
-                <div id="app-config-subsection" class="subsection-content">
+                <div id="app-config-subsection" class="subsection-content active">
                     <h3>Application Configuration</h3>
                     <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Edit admin_settings.json configuration. Changes require application restart.</p>
 
@@ -653,22 +654,9 @@
                         <p style="color: var(--text-muted); font-style: italic;">Configuration editor coming soon.</p>
                     </div>
                 </div>
-            </section>
 
-            <!-- Security Management Section -->
-            <section class="security-management glass-card">
-                <h2>🔒 Security Management</h2>
-
-                <!-- Subsection Tabs -->
-                <div class="subsection-tabs">
-                    <button class="subsection-tab active" data-subsection="auth-toggle">Authentication</button>
-                    <button class="subsection-tab" data-subsection="failed-logins">Failed Logins</button>
-                    <button class="subsection-tab" data-subsection="security-config">Security Config</button>
-                    <button class="subsection-tab" data-subsection="sessions">Active Sessions</button>
-                </div>
-
-                <!-- Auth Toggle Subsection -->
-                <div id="auth-toggle-subsection" class="subsection-content active">
+                <!-- Authentication Subsection -->
+                <div id="authentication-subsection" class="subsection-content">
                     <h3>Authentication System</h3>
                     <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Enable or disable the authentication system. When disabled, all users have admin access.</p>
 
@@ -682,34 +670,102 @@
                     </div>
                 </div>
 
-                <!-- Failed Logins Subsection -->
-                <div id="failed-logins-subsection" class="subsection-content">
-                    <h3>Failed Login Attempts & Locked Accounts</h3>
-                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Monitor failed login attempts and manage locked accounts.</p>
-
-                    <div id="failed-logins-container">
-                        <!-- Failed logins populated by JavaScript -->
-                    </div>
-                </div>
-
                 <!-- Security Config Subsection -->
                 <div id="security-config-subsection" class="subsection-content">
                     <h3>Security Settings</h3>
-                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure security thresholds, JWT expiry, and IP tracking settings.</p>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure proxy and CORS settings for secure deployment.</p>
 
-                    <div id="security-config-form">
-                        <!-- Security config form will be added in future phase -->
-                        <p style="color: var(--text-muted); font-style: italic;">Security settings editor coming soon. Edit admin_settings.json manually to change security settings.</p>
+                    <div class="warning-box" style="margin-bottom: 2rem;">
+                        <strong>⚠️ Important:</strong> Changes to these settings require an application restart to take effect.
                     </div>
+
+                    <form id="security-config-form">
+                        <!-- Proxy Settings -->
+                        <div class="settings-section">
+                            <h4>🔗 Proxy Configuration</h4>
+                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Configure reverse proxy settings if deployed behind Nginx, Caddy, or similar.</p>
+
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="is-behind-proxy">
+                                    <span>Application is behind a reverse proxy</span>
+                                </label>
+                                <small style="color: var(--text-muted);">Enable this if using Nginx, Caddy, Traefik, or similar</small>
+                            </div>
+
+                            <div id="proxy-settings-group" style="display: none;">
+                                <div class="form-group">
+                                    <label for="proxy-header">Client IP Header</label>
+                                    <select id="proxy-header" class="form-control">
+                                        <option value="X-Forwarded-For">X-Forwarded-For (Most common)</option>
+                                        <option value="X-Real-IP">X-Real-IP (Nginx)</option>
+                                        <option value="CF-Connecting-IP">CF-Connecting-IP (Cloudflare)</option>
+                                        <option value="True-Client-IP">True-Client-IP (Akamai)</option>
+                                    </select>
+                                    <small style="color: var(--text-muted);">The header your proxy uses to send the real client IP</small>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="trusted-proxies-list">Trusted Proxy IPs/CIDRs</label>
+                                    <div id="trusted-proxies-list" class="list-container">
+                                        <!-- Dynamically populated -->
+                                    </div>
+                                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                                        <input type="text" id="new-proxy-ip" class="form-control" placeholder="192.168.1.1 or 10.0.0.0/8" style="flex: 1;">
+                                        <button type="button" id="add-proxy-ip-btn" class="btn btn-secondary">Add</button>
+                                    </div>
+                                    <small style="color: var(--text-muted);">Only accept proxy headers from these IPs. Include all reverse proxies in the chain.</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- CORS Settings -->
+                        <div class="settings-section">
+                            <h4>🌐 CORS Configuration</h4>
+                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Configure which domains can access your API.</p>
+
+                            <div class="form-group">
+                                <label for="allowed-origins-list">Allowed Origins</label>
+                                <div id="allowed-origins-list" class="list-container">
+                                    <!-- Dynamically populated -->
+                                </div>
+                                <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                                    <input type="text" id="new-origin" class="form-control" placeholder="https://example.com" style="flex: 1;">
+                                    <button type="button" id="add-origin-btn" class="btn btn-secondary">Add</button>
+                                </div>
+                                <small style="color: var(--text-muted);">Domains that can make API requests to this server</small>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 2rem;">
+                            <button type="submit" class="btn btn-primary">💾 Save Security Settings</button>
+                        </div>
+                    </form>
                 </div>
 
-                <!-- Sessions Subsection -->
-                <div id="sessions-subsection" class="subsection-content">
-                    <h3>Active Sessions</h3>
-                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">View current logged-in users and their recent activity.</p>
+                <!-- Audit Log Subsection -->
+                <div id="audit-log-subsection" class="subsection-content">
+                    <h3>Audit Log</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">View user activity, authentication events, and system changes.</p>
 
-                    <div id="sessions-container">
-                        <!-- Active sessions populated by JavaScript -->
+                    <!-- Filter Controls -->
+                    <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap;">
+                        <label for="audit-log-filter" style="font-weight: 600; color: var(--text-light);">Filter by:</label>
+                        <select id="audit-log-filter" class="form-control" style="max-width: 300px;">
+                            <option value="">All Events</option>
+                            <option value="user_management">User Management</option>
+                            <option value="failed_login">Failed Logins</option>
+                            <option value="authentication">Authentication (Login/Logout)</option>
+                        </select>
+                        <button id="audit-log-refresh-btn" class="btn btn-secondary" style="margin-left: auto;">
+                            🔄 Refresh
+                        </button>
+                    </div>
+
+                    <div id="audit-logs-container">
+                        <!-- Audit logs populated by JavaScript -->
                     </div>
                 </div>
             </section>

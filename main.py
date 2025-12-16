@@ -56,7 +56,7 @@ from security import (
 from auth import PasswordService, JWTService, AuthService, AuditLogService
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.1.1-12"
+APP_VERSION = "2.4.0-12"
 
 def cleanup_old_logs():
     """
@@ -287,32 +287,29 @@ app.add_middleware(
 async def trust_proxy_headers(request: Request, call_next):
     """
     Extract client IP from proxy headers based on admin configuration.
-    
-    Supports multiple proxy types by reading trusted proxy configuration
-    from admin_settings.json. This enables deployment flexibility across
-    different reverse proxy architectures.
+
+    Supports flexible proxy configurations by reading:
+    - is_behind_proxy: Whether the app is behind a reverse proxy
+    - proxy_header: Which header to read (X-Forwarded-For, X-Real-IP, CF-Connecting-IP, etc.)
+    - trusted_proxies: List of proxy IPs/CIDRs to trust
     """
     admin_settings = get_admin_settings()
-    
-    # If proxy support is disabled, use direct connection IP only
-    if not admin_settings.proxy.enabled:
+
+    # If not behind a proxy, use direct connection IP only
+    if not admin_settings.proxy.is_behind_proxy:
         client_ip = request.client.host if request.client else "unknown"
         request.state.client_ip = client_ip
         return await call_next(request)
-    
-    # Extract proxy headers
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    real_ip = request.headers.get("X-Real-IP")
-    forwarded_proto = request.headers.get("X-Forwarded-Proto")
-    forwarded_host = request.headers.get("X-Forwarded-Host")
+
+    # Get the direct connection IP
     direct_ip = request.client.host if request.client else None
 
-    # Determine client IP based on trusted proxy configuration
+    # Default to direct IP
     client_ip = direct_ip or "unknown"
-    
+
     # Only trust proxy headers if they come from a trusted proxy
     from ipaddress import ip_address as parse_ip, ip_network, AddressValueError
-    
+
     try:
         if direct_ip and admin_settings.proxy.trusted_proxies:
             # Check if direct connection is from a trusted proxy
@@ -321,24 +318,29 @@ async def trust_proxy_headers(request: Request, call_next):
                 direct_ip_obj = parse_ip(direct_ip)
                 for trusted in admin_settings.proxy.trusted_proxies:
                     if "/" in trusted:
+                        # CIDR range (e.g., 192.168.0.0/24)
                         if direct_ip_obj in ip_network(trusted, strict=False):
                             is_trusted = True
                             break
                     else:
+                        # Single IP
                         if direct_ip_obj == parse_ip(trusted):
                             is_trusted = True
                             break
             except (AddressValueError, ValueError):
                 pass
-            
+
             if is_trusted:
-                # Connection is from trusted proxy, extract real IP
-                if admin_settings.proxy.trust_x_forwarded_for and forwarded_for:
-                    # X-Forwarded-For may contain multiple IPs (client, proxy1, proxy2, ...)
+                # Connection is from trusted proxy, extract real IP from configured header
+                header_value = request.headers.get(admin_settings.proxy.proxy_header)
+
+                if header_value:
+                    # Some headers like X-Forwarded-For may contain multiple IPs (client, proxy1, proxy2, ...)
                     # Take the first one (leftmost) which is the original client
-                    client_ip = forwarded_for.split(',')[0].strip()
-                elif admin_settings.proxy.trust_x_real_ip and real_ip:
-                    client_ip = real_ip
+                    if ',' in header_value:
+                        client_ip = header_value.split(',')[0].strip()
+                    else:
+                        client_ip = header_value.strip()
     except Exception:
         # If IP parsing fails, fall back to safe behavior
         pass
@@ -360,10 +362,7 @@ async def trust_proxy_headers(request: Request, call_next):
 
     if admin_settings.security.debug_proxy_headers and trust_proxy_headers.logged_count < 5:
         logger.info(f"Proxy Headers Debug - Direct IP: {direct_ip}")
-        logger.info(f"  X-Forwarded-For: {forwarded_for}")
-        logger.info(f"  X-Real-IP: {real_ip}")
-        logger.info(f"  X-Forwarded-Proto: {forwarded_proto}")
-        logger.info(f"  X-Forwarded-Host: {forwarded_host}")
+        logger.info(f"  Configured Header ({admin_settings.proxy.proxy_header}): {request.headers.get(admin_settings.proxy.proxy_header)}")
         logger.info(f"  Resolved Client IP: {client_ip}")
         trust_proxy_headers.logged_count += 1
 
@@ -2720,7 +2719,7 @@ async def create_first_admin(
         db.refresh(admin_user)
 
         # Get IP address for audit log
-        ip_address = request.client.host if request.client else "unknown"
+        ip_address = get_client_ip(request)
 
         # Log audit event
         AuditLogService.log_event(
@@ -3382,9 +3381,11 @@ async def get_audit_logs(
     """
     query = db.query(AuthAuditLog).order_by(AuthAuditLog.timestamp.desc())
 
-    # Filter by event type if specified
+    # Filter by event type if specified (supports comma-separated list)
     if event_type:
-        query = query.filter(AuthAuditLog.event_type == event_type)
+        # Split comma-separated event types and filter
+        event_types = [et.strip() for et in event_type.split(',')]
+        query = query.filter(AuthAuditLog.event_type.in_(event_types))
 
     # Get total count for pagination
     total = query.count()
@@ -3489,6 +3490,134 @@ async def get_active_sessions(
         "sessions": sessions,
         "note": "JWT tokens are stateless. Showing successful logins in the last 24 hours."
     }
+
+
+@app.get("/api/admin/settings")
+async def get_admin_settings_ui(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Get admin settings for web UI editing (ADMIN ONLY).
+
+    Returns only the settings that should be editable via the UI.
+    Excludes application architecture settings like public_endpoints.
+    """
+    admin_settings = get_admin_settings()
+
+    return {
+        "proxy": {
+            "is_behind_proxy": admin_settings.proxy.is_behind_proxy,
+            "proxy_header": admin_settings.proxy.proxy_header,
+            "trusted_proxies": admin_settings.proxy.trusted_proxies
+        },
+        "cors": {
+            "allowed_origins": admin_settings.cors.allowed_origins
+        },
+        "auth": {
+            "enabled": admin_settings.auth.enabled,
+            "jwt_session_expiry_hours": admin_settings.auth.jwt_session_expiry_hours,
+            "jwt_key_rotation_days": admin_settings.auth.jwt_key_rotation_days,
+            "failed_login_attempts_max": admin_settings.auth.failed_login_attempts_max,
+            "failed_login_lockout_minutes": admin_settings.auth.failed_login_lockout_minutes,
+            "suspicious_ip_threshold": admin_settings.auth.suspicious_ip_threshold,
+            "suspicious_ip_window_hours": admin_settings.auth.suspicious_ip_window_hours
+        },
+        "security": {
+            "debug_proxy_headers": admin_settings.security.debug_proxy_headers,
+            "validate_ip_format": admin_settings.security.validate_ip_format,
+            "allow_ytdlp_update": admin_settings.security.allow_ytdlp_update
+        },
+        "rate_limiting": {
+            "enabled": admin_settings.rate_limit.enabled,
+            "max_requests_per_window": admin_settings.rate_limit.max_requests_per_window,
+            "window_seconds": admin_settings.rate_limit.window_seconds,
+            "max_tracked_ips": admin_settings.rate_limit.max_tracked_ips,
+            "cleanup_interval_seconds": admin_settings.rate_limit.cleanup_interval_seconds
+        }
+    }
+
+
+@app.post("/api/admin/settings/update")
+async def update_admin_settings_ui(
+    settings_update: Dict[str, Any],
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Update admin settings from web UI (ADMIN ONLY).
+
+    Validates input and writes to admin_settings.json.
+    Changes require application restart to take effect.
+    """
+    import json
+    from pathlib import Path
+
+    try:
+        # Load current settings file
+        settings_file = Path("admin_settings.json")
+        if not settings_file.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="admin_settings.json not found"
+            )
+
+        with open(settings_file, 'r') as f:
+            current_settings = json.load(f)
+
+        # Update only the provided fields
+        if "proxy" in settings_update:
+            current_settings["proxy"].update(settings_update["proxy"])
+
+        if "cors" in settings_update:
+            current_settings["cors"].update(settings_update["cors"])
+
+        if "auth" in settings_update:
+            current_settings["auth"].update(settings_update["auth"])
+
+        if "security" in settings_update:
+            current_settings["security"].update(settings_update["security"])
+
+        if "rate_limiting" in settings_update:
+            current_settings["rate_limiting"].update(settings_update["rate_limiting"])
+
+        # Validate updated settings
+        # Basic type validation
+        if "proxy" in settings_update:
+            if "is_behind_proxy" in settings_update["proxy"]:
+                if not isinstance(settings_update["proxy"]["is_behind_proxy"], bool):
+                    raise ValueError("is_behind_proxy must be a boolean")
+
+            if "trusted_proxies" in settings_update["proxy"]:
+                if not isinstance(settings_update["proxy"]["trusted_proxies"], list):
+                    raise ValueError("trusted_proxies must be a list")
+
+        if "cors" in settings_update:
+            if "allowed_origins" in settings_update["cors"]:
+                if not isinstance(settings_update["cors"]["allowed_origins"], list):
+                    raise ValueError("allowed_origins must be a list")
+
+        # Write updated settings to file
+        with open(settings_file, 'w') as f:
+            json.dump(current_settings, f, indent=2)
+
+        # Log the change
+        await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} updated application settings")
+
+        return {
+            "message": "Settings updated successfully. Restart application to apply changes.",
+            "settings": current_settings
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to update admin settings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update settings: {str(e)}"
+        )
 
 
 @app.get("/")

@@ -1,17 +1,46 @@
 {
-  "current_version": "2.1.1-12",
+  "current_version": "2.4.0-12",
   "releases": [
+    {
+      "version": "2.4.0-12",
+      "date": "2024-12-16",
+      "title": "System Management & Application Control WebUI",
+      "highlights": [
+        "Added Full-Implementation of Admin Settings UI",
+        "Added Database Backup and Management Features",
+        "Fixed some Header Issues for better Client Resolution behind Proxies"
+      ]
+    },
+    {
+      "version": "2.3.0-12",
+      "date": "2024-12-16",
+      "title": "Admin Settings & User Management",
+      "highlights": [
+        "Added more User Management Features",
+        "Added System & Admin Audit Logging",
+        "Moved some User Settings into Admin Settings",
+        "Fixed Self-deletion and self-demotion protection"
+      ]
+    },
+    {
+      "version": "2.2.0-12",
+      "date": "2024-12-16",
+      "title": "Root Route Fixes & UI Improvements",
+      "highlights": [
+        "Fixed a Login Loop and Improved Login Flow",
+        "UI Cleanup and Login Screen Polishing",
+        "Fixed Error Handling for discovered Edge Cases"
+      ]
+    },
     {
       "version": "2.1.1-12",
       "date": "2024-12-16",
       "title": "Admin Onboarding & Login Flow Improvements",
       "highlights": [
-        "Integrated first-time admin setup into login page",
-        "Database-driven setup flag (SystemSettings table)",
-        "Automatic transition from setup to login mode",
-        "Single consolidated authentication interface",
-        "Fixed missing get_client_ip function error",
-        "Removed separate setup.html page for cleaner UX"
+        "Fixed First-time Setup Issues",
+        "Added Consolidated Authentication Interface",
+        "Fixed Missing get_client_ip Function",
+        "Added Dedicated Admin Onboarding Process"
       ]
     },
     {
@@ -19,14 +48,10 @@
       "date": "2024-12-16",
       "title": "Authentication & Security Overhaul",
       "highlights": [
-        "JWT-based authentication system with 24-hour sessions",
-        "User management with admin and standard user roles",
-        "Account lockout after 5 failed login attempts (30-min cooldown)",
-        "IP tracking and suspicious activity detection",
-        "Comprehensive audit logging for all auth events",
-        "Automatic JWT key rotation every 7 days",
-        "Protected all sensitive API endpoints",
-        "Modern split-screen login page with release notes"
+        "Added JWT-based Authentication with Key Rotation",
+        "Added User Management and Control System",
+        "Added Audit Logging for Authentication and System Events",
+        "Added Protection for Sensitive API Endpoints"
       ]
     },
     {
@@ -34,10 +59,9 @@
       "date": "2024-12-15",
       "title": "Version Tracking & Domain Fixes",
       "highlights": [
-        "Added comprehensive version tracking system",
-        "Fixed domain parsing for better URL handling",
-        "Updated branding to Vidnag Framework",
-        "Improved internal version management"
+        "Added Version Tracking",
+        "Fixed Domain Parsing for sites with Multiple Domains",
+        "Updated branding to Vidnag Framework"
       ]
     },
     {
@@ -45,11 +69,11 @@
       "date": "2024-12-14",
       "title": "Queue System & Browser Localization",
       "highlights": [
-        "Browser localization support for international users",
-        "Major queue system upgrade with better concurrency",
-        "Enhanced video processing tools",
-        "Database schema improvements and migrations",
-        "Improved error handling and logging"
+        "Added Browser Localization Support",
+        "Fixed Queue System for better concurrency",
+        "Fixed Video Processing Tools",
+        "Updated Database schema",
+        "Added Error Handling and Logging"
       ]
     },
     {
@@ -57,10 +81,10 @@
       "date": "2024-12-07",
       "title": "Upload & Video Tools",
       "highlights": [
-        "File upload functionality for local video processing",
-        "Simple video editing tools integration",
-        "Improved file management system",
-        "Enhanced video transformation capabilities"
+        "Added File Upload Functionality",
+        "Added Simple Video Editing Tools",
+        "Updated File Management System",
+        "Added Video Transformation Capabilities"
       ]
     },
     {
@@ -68,11 +92,9 @@
       "date": "2024-12-06",
       "title": "Performance & Resource Optimization",
       "highlights": [
-        "Memory leak audit and resource consolidation",
-        "UUID-based internal file handling for better tracking",
-        "Optimized disk space checks (downloads folder only)",
-        "Updated and pinned package dependencies",
-        "Video download progress display improvements"
+        "Audited for Memory Leaks, Bad Process Handling. and Resource Consolidation",
+        "Added UUID-based File Handling for better Compatibility",
+        "Updated and pinned package dependencies"
       ]
     },
     {
@@ -80,11 +102,10 @@
       "date": "2024-12-05",
       "title": "Cookie Support & Cache Management",
       "highlights": [
-        "YouTube cookie support for authenticated downloads",
-        "Instagram and X (Twitter) cookie integration",
-        "yt-dlp cache clearing functionality",
-        "First-run permissions check system",
-        "Updated YouTube extraction logic"
+        "Added support for Downloading with Cookies",
+        "Added YT-DLP Cache Clearing Dunctionality",
+        "Added First-run Permissions Check System",
+        "Fixed YouTube Extraction Logic"
       ]
     },
     {
@@ -92,12 +113,10 @@
       "date": "2024-12-05",
       "title": "Initial Release",
       "highlights": [
-        "Core video download functionality",
-        "yt-dlp integration for multi-platform support",
-        "Modern web interface with dark/light themes",
-        "Download queue management",
-        "Format selection and quality options",
-        "Real-time download progress tracking"
+        "Added Core video download functionality",
+        "Added YT-DLP Integration for multi-platform support",
+        "Added Support for Dark/Light Themes",
+        "Added Real-time Download Progress Tracking"
       ]
     }
   ]

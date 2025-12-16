@@ -4283,18 +4283,23 @@ function loadSubsectionData(subsectionName) {
         case 'database':
             loadDatabaseStats();
             break;
-        case 'logs':
-            loadAuditLogs();
-            break;
         case 'cleanup':
             // Cleanup already has event listeners
             console.log('Cleanup subsection selected');
             break;
-        case 'failed-logins':
-            loadFailedLogins();
+        case 'app-config':
+            // App config editor coming soon
+            console.log('App config subsection selected');
             break;
-        case 'sessions':
-            loadActiveSessions();
+        case 'authentication':
+            // Authentication controls coming soon
+            console.log('Authentication subsection selected');
+            break;
+        case 'security-config':
+            loadAdminSettings();
+            break;
+        case 'audit-log':
+            loadAuditLogs();
             break;
     }
 }
@@ -4722,14 +4727,33 @@ async function handleDownloadBackup(backupFilename) {
 /**
  * Load audit logs
  */
-async function loadAuditLogs() {
+async function loadAuditLogs(filterType = null) {
     const container = document.getElementById('audit-logs-container');
     if (!container) return;
 
     container.innerHTML = '<p class="loading-state">Loading audit logs...</p>';
 
     try {
-        const response = await apiFetch('/api/admin/audit-logs?limit=50');
+        // Build API URL with filter
+        let apiUrl = '/api/admin/audit-logs?limit=100';
+
+        // Map filter types to event_type parameter
+        if (filterType) {
+            switch (filterType) {
+                case 'user_management':
+                    // Include user-related events
+                    apiUrl += '&event_type=user_created,user_updated,user_deleted,user_disabled,user_enabled';
+                    break;
+                case 'failed_login':
+                    apiUrl += '&event_type=login_failed';
+                    break;
+                case 'authentication':
+                    apiUrl += '&event_type=login_success,logout';
+                    break;
+            }
+        }
+
+        const response = await apiFetch(apiUrl);
         if (!response.ok) {
             throw new Error('Failed to load audit logs');
         }
@@ -4737,7 +4761,7 @@ async function loadAuditLogs() {
         const data = await response.json();
 
         if (data.logs.length === 0) {
-            container.innerHTML = '<p class="empty-state">No audit logs found</p>';
+            container.innerHTML = '<p class="empty-state">No audit logs found for this filter</p>';
             return;
         }
 
@@ -4759,13 +4783,21 @@ async function loadAuditLogs() {
             const timestamp = new Date(log.timestamp).toLocaleString();
             const details = log.details ? JSON.stringify(log.details, null, 2) : 'N/A';
 
+            // Color-code event types
+            let badgeClass = 'badge-primary';
+            if (log.event_type.includes('failed') || log.event_type.includes('deleted') || log.event_type.includes('disabled')) {
+                badgeClass = 'badge-danger';
+            } else if (log.event_type.includes('success') || log.event_type.includes('created') || log.event_type.includes('enabled')) {
+                badgeClass = 'badge-success';
+            }
+
             tableHTML += `
                 <tr>
                     <td>${timestamp}</td>
-                    <td><span class="badge badge-primary">${log.event_type}</span></td>
+                    <td><span class="badge ${badgeClass}">${log.event_type}</span></td>
                     <td>${log.username || 'N/A'}</td>
                     <td>${log.ip_address}</td>
-                    <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="${details}">${details.substring(0, 50)}...</td>
+                    <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${details}">${details.substring(0, 50)}${details.length > 50 ? '...' : ''}</td>
                 </tr>
             `;
         });
@@ -4896,6 +4928,282 @@ async function loadActiveSessions() {
     } catch (error) {
         console.error('Error loading sessions:', error);
         container.innerHTML = '<p class="empty-state" style="color: var(--danger);">Failed to load active sessions</p>';
+    }
+}
+
+// ============================================
+// ADMIN SETTINGS MANAGEMENT
+// ============================================
+
+// Global settings state
+let currentAdminSettings = null;
+
+/**
+ * Load admin settings from API
+ */
+async function loadAdminSettings() {
+    try {
+        const response = await apiFetch('/api/admin/settings');
+        if (!response.ok) {
+            throw new Error('Failed to load admin settings');
+        }
+
+        currentAdminSettings = await response.json();
+
+        // Load security config tab if visible
+        const securityConfigForm = document.getElementById('security-config-form');
+        if (securityConfigForm) {
+            loadSecurityConfigForm();
+        }
+
+        return currentAdminSettings;
+    } catch (error) {
+        console.error('Error loading admin settings:', error);
+        showToast('Failed to load admin settings', 'error');
+        return null;
+    }
+}
+
+/**
+ * Load Security Config form with current settings
+ */
+function loadSecurityConfigForm() {
+    if (!currentAdminSettings) return;
+
+    // Load proxy settings
+    const isBehindProxy = document.getElementById('is-behind-proxy');
+    if (isBehindProxy) {
+        isBehindProxy.checked = currentAdminSettings.proxy.is_behind_proxy;
+        toggleProxySettings();
+    }
+
+    const proxyHeader = document.getElementById('proxy-header');
+    if (proxyHeader) {
+        proxyHeader.value = currentAdminSettings.proxy.proxy_header;
+    }
+
+    // Render trusted proxies list
+    renderTrustedProxiesList(currentAdminSettings.proxy.trusted_proxies);
+
+    // Render allowed origins list
+    renderAllowedOriginsList(currentAdminSettings.cors.allowed_origins);
+}
+
+/**
+ * Render trusted proxies list
+ */
+function renderTrustedProxiesList(proxies) {
+    const container = document.getElementById('trusted-proxies-list');
+    if (!container) return;
+
+    if (proxies.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); padding: 0.5rem; text-align: center;">No trusted proxies configured</p>';
+        return;
+    }
+
+    let html = '';
+    proxies.forEach(proxy => {
+        html += `
+            <div class="list-item">
+                <span class="list-item-text">${proxy}</span>
+                <button type="button" class="list-item-remove" data-proxy="${proxy}" title="Remove">✕</button>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+
+    // Add event listeners to remove buttons
+    container.querySelectorAll('.list-item-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const proxy = btn.dataset.proxy;
+            removeTrustedProxy(proxy);
+        });
+    });
+}
+
+/**
+ * Render allowed origins list
+ */
+function renderAllowedOriginsList(origins) {
+    const container = document.getElementById('allowed-origins-list');
+    if (!container) return;
+
+    if (origins.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); padding: 0.5rem; text-align: center;">No origins configured</p>';
+        return;
+    }
+
+    let html = '';
+    origins.forEach(origin => {
+        html += `
+            <div class="list-item">
+                <span class="list-item-text">${origin}</span>
+                <button type="button" class="list-item-remove" data-origin="${origin}" title="Remove">✕</button>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+
+    // Add event listeners to remove buttons
+    container.querySelectorAll('.list-item-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const origin = btn.dataset.origin;
+            removeAllowedOrigin(origin);
+        });
+    });
+}
+
+/**
+ * Add trusted proxy IP
+ */
+function addTrustedProxy() {
+    const input = document.getElementById('new-proxy-ip');
+    if (!input) return;
+
+    const proxy = input.value.trim();
+    if (!proxy) {
+        showToast('Please enter a proxy IP or CIDR', 'error');
+        return;
+    }
+
+    // Basic validation for IP or CIDR
+    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
+    if (!ipRegex.test(proxy)) {
+        showToast('Invalid IP or CIDR format (e.g., 192.168.1.1 or 10.0.0.0/8)', 'error');
+        return;
+    }
+
+    // Check if already exists
+    if (currentAdminSettings.proxy.trusted_proxies.includes(proxy)) {
+        showToast('This proxy is already in the list', 'error');
+        return;
+    }
+
+    // Add to settings
+    currentAdminSettings.proxy.trusted_proxies.push(proxy);
+    renderTrustedProxiesList(currentAdminSettings.proxy.trusted_proxies);
+    input.value = '';
+}
+
+/**
+ * Remove trusted proxy IP
+ */
+function removeTrustedProxy(proxy) {
+    if (!confirm(`Remove ${proxy} from trusted proxies?`)) return;
+
+    currentAdminSettings.proxy.trusted_proxies = currentAdminSettings.proxy.trusted_proxies.filter(p => p !== proxy);
+    renderTrustedProxiesList(currentAdminSettings.proxy.trusted_proxies);
+}
+
+/**
+ * Add allowed origin
+ */
+function addAllowedOrigin() {
+    const input = document.getElementById('new-origin');
+    if (!input) return;
+
+    const origin = input.value.trim();
+    if (!origin) {
+        showToast('Please enter an origin URL', 'error');
+        return;
+    }
+
+    // Basic validation for URL
+    if (origin !== '*' && !origin.match(/^https?:\/\/.+/)) {
+        showToast('Invalid origin format (e.g., https://example.com or *)', 'error');
+        return;
+    }
+
+    // Check if already exists
+    if (currentAdminSettings.cors.allowed_origins.includes(origin)) {
+        showToast('This origin is already in the list', 'error');
+        return;
+    }
+
+    // Add to settings
+    currentAdminSettings.cors.allowed_origins.push(origin);
+    renderAllowedOriginsList(currentAdminSettings.cors.allowed_origins);
+    input.value = '';
+}
+
+/**
+ * Remove allowed origin
+ */
+function removeAllowedOrigin(origin) {
+    if (!confirm(`Remove ${origin} from allowed origins?`)) return;
+
+    currentAdminSettings.cors.allowed_origins = currentAdminSettings.cors.allowed_origins.filter(o => o !== origin);
+    renderAllowedOriginsList(currentAdminSettings.cors.allowed_origins);
+}
+
+/**
+ * Toggle proxy settings visibility
+ */
+function toggleProxySettings() {
+    const checkbox = document.getElementById('is-behind-proxy');
+    const proxyGroup = document.getElementById('proxy-settings-group');
+
+    if (checkbox && proxyGroup) {
+        proxyGroup.style.display = checkbox.checked ? 'block' : 'none';
+    }
+}
+
+/**
+ * Save security settings
+ */
+async function saveSecuritySettings(e) {
+    e.preventDefault();
+
+    if (!currentAdminSettings) {
+        showToast('Settings not loaded', 'error');
+        return;
+    }
+
+    // Update settings from form
+    const isBehindProxy = document.getElementById('is-behind-proxy');
+    const proxyHeader = document.getElementById('proxy-header');
+
+    currentAdminSettings.proxy.is_behind_proxy = isBehindProxy.checked;
+    currentAdminSettings.proxy.proxy_header = proxyHeader.value;
+
+    // Validate
+    if (currentAdminSettings.proxy.is_behind_proxy) {
+        if (currentAdminSettings.proxy.trusted_proxies.length === 0) {
+            showToast('Please add at least one trusted proxy IP', 'error');
+            return;
+        }
+    }
+
+    if (currentAdminSettings.cors.allowed_origins.length === 0) {
+        showToast('Please add at least one allowed origin', 'error');
+        return;
+    }
+
+    try {
+        const response = await apiFetch('/api/admin/settings/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                proxy: currentAdminSettings.proxy,
+                cors: currentAdminSettings.cors
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to save settings');
+        }
+
+        const result = await response.json();
+        showToast('Security settings saved successfully! Restart the application to apply changes.', 'success');
+
+        // Reload settings to confirm
+        await loadAdminSettings();
+    } catch (error) {
+        console.error('Error saving security settings:', error);
+        showToast(`Failed to save settings: ${error.message}`, 'error');
     }
 }
 
@@ -5062,6 +5370,65 @@ document.addEventListener('DOMContentLoaded', async () => {
     const restoreBackupBtn = document.getElementById('restore-backup-btn');
     if (restoreBackupBtn) {
         restoreBackupBtn.addEventListener('click', handleRestoreBackup);
+    }
+
+    // Audit log filter and refresh buttons
+    const auditLogFilter = document.getElementById('audit-log-filter');
+    if (auditLogFilter) {
+        auditLogFilter.addEventListener('change', (e) => {
+            const filterValue = e.target.value;
+            loadAuditLogs(filterValue || null);
+        });
+    }
+
+    const auditLogRefreshBtn = document.getElementById('audit-log-refresh-btn');
+    if (auditLogRefreshBtn) {
+        auditLogRefreshBtn.addEventListener('click', () => {
+            const filterValue = auditLogFilter ? auditLogFilter.value : '';
+            loadAuditLogs(filterValue || null);
+        });
+    }
+
+    // Admin Settings - Security Config
+    const securityConfigForm = document.getElementById('security-config-form');
+    if (securityConfigForm) {
+        securityConfigForm.addEventListener('submit', saveSecuritySettings);
+    }
+
+    const isBehindProxyCheckbox = document.getElementById('is-behind-proxy');
+    if (isBehindProxyCheckbox) {
+        isBehindProxyCheckbox.addEventListener('change', toggleProxySettings);
+    }
+
+    const addProxyIpBtn = document.getElementById('add-proxy-ip-btn');
+    if (addProxyIpBtn) {
+        addProxyIpBtn.addEventListener('click', addTrustedProxy);
+    }
+
+    const addOriginBtn = document.getElementById('add-origin-btn');
+    if (addOriginBtn) {
+        addOriginBtn.addEventListener('click', addAllowedOrigin);
+    }
+
+    // Allow adding proxy/origin with Enter key
+    const newProxyIpInput = document.getElementById('new-proxy-ip');
+    if (newProxyIpInput) {
+        newProxyIpInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addTrustedProxy();
+            }
+        });
+    }
+
+    const newOriginInput = document.getElementById('new-origin');
+    if (newOriginInput) {
+        newOriginInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addAllowedOrigin();
+            }
+        });
     }
 
     // Close help modal on escape key

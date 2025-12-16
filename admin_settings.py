@@ -45,13 +45,9 @@ DEFAULT_ADMIN_SETTINGS = {
         "allowed_headers": ["Content-Type", "Authorization"],
     },
     "proxy": {
-        "enabled": True,
+        "is_behind_proxy": False,  # Set to True if behind a reverse proxy
+        "proxy_header": "X-Forwarded-For",  # Header to read client IP from
         "trusted_proxies": ["127.0.0.1"],  # Only localhost by default
-        "trust_x_forwarded_for": True,
-        "trust_x_real_ip": True,
-        "trust_forwarded_header": True,
-        "max_proxy_hops": 2,
-        "require_https": False,  # Set to True in production
     },
     "rate_limiting": {
         "enabled": True,
@@ -100,13 +96,9 @@ class CORSConfig:
 @dataclass
 class ProxyConfig:
     """Proxy trust and header configuration"""
-    enabled: bool
-    trusted_proxies: List[str]
-    trust_x_forwarded_for: bool
-    trust_x_real_ip: bool
-    trust_forwarded_header: bool
-    max_proxy_hops: int
-    require_https: bool
+    is_behind_proxy: bool
+    proxy_header: str  # e.g., "X-Forwarded-For", "X-Real-IP", "CF-Connecting-IP"
+    trusted_proxies: List[str]  # List of trusted proxy IPs or CIDR ranges
 
 
 @dataclass
@@ -279,7 +271,7 @@ class AdminSettings:
             return False, f"CORS methods configuration error: {error}"
 
         # Validate trusted proxies
-        if self.proxy.enabled and self.proxy.trusted_proxies:
+        if self.proxy.is_behind_proxy and self.proxy.trusted_proxies:
             is_valid, error = validate_trusted_proxies(self.proxy.trusted_proxies)
             if not is_valid:
                 return False, f"Proxy configuration error: {error}"
