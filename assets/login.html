@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Vidnag Framework</title>
+    <link rel="icon" type="image/png" href="/assets/logo.png">
+    <link rel="stylesheet" href="/assets/styles.css">
+    <style>
+        /* Full page layout */
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+        }
+
+        /* Left section - Branding & Release Notes (2/3) */
+        .login-left {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            background:
+                radial-gradient(circle at 20% 20%, rgba(var(--primary-color-rgb), 0.4) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(var(--secondary-color-rgb), 0.4) 0%, transparent 50%),
+                linear-gradient(135deg,
+                    rgba(var(--primary-color-rgb), 0.3) 0%,
+                    rgba(var(--secondary-color-rgb), 0.3) 100%),
+                #0a0a0a;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Animated background particles for left side */
+        .login-left::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(circle at 20% 30%, rgba(var(--primary-color-rgb), 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 80% 70%, rgba(var(--secondary-color-rgb), 0.15) 0%, transparent 40%);
+            filter: blur(60px);
+            pointer-events: none;
+        }
+
+        .login-left-content {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            padding: 3rem;
+            color: #fff;
+        }
+
+        /* Logo and branding section */
+        .branding {
+            text-align: center;
+            margin-bottom: 3rem;
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(var(--primary-color-rgb), 0.2);
+            border-radius: 20px;
+            padding: 2.5rem 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .branding:hover {
+            border-color: rgba(var(--primary-color-rgb), 0.4);
+            box-shadow:
+                0 8px 32px rgba(0, 0, 0, 0.5),
+                0 0 40px rgba(var(--primary-color-rgb), 0.2);
+        }
+
+        .branding-logo {
+            width: 120px;
+            height: 120px;
+            margin: 0 auto 1.5rem;
+            filter: drop-shadow(0 8px 24px rgba(var(--primary-color-rgb), 0.4));
+            animation: float 6s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0px);
+            }
+            50% {
+                transform: translateY(-20px);
+            }
+        }
+
+        .branding-title {
+            font-size: 3rem;
+            font-weight: 700;
+            margin: 0 0 0.5rem 0;
+            text-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .branding-subtitle {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            font-weight: 300;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Release notes section */
+        .release-notes {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(var(--primary-color-rgb), 0.2);
+            border-radius: 20px;
+            padding: 2rem;
+            overflow-y: auto;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .release-notes:hover {
+            border-color: rgba(var(--primary-color-rgb), 0.4);
+            box-shadow:
+                0 8px 32px rgba(0, 0, 0, 0.5),
+                0 0 40px rgba(var(--secondary-color-rgb), 0.2);
+        }
+
+        .release-notes-header {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid rgba(var(--primary-color-rgb), 0.4);
+            background: linear-gradient(90deg,
+                rgba(var(--primary-color-rgb), 0.2),
+                rgba(var(--secondary-color-rgb), 0.2)
+            );
+            padding: 1rem;
+            margin: -2rem -2rem 1.5rem -2rem;
+            border-radius: 20px 20px 0 0;
+        }
+
+        .release-notes-loading {
+            text-align: center;
+            padding: 2rem;
+            opacity: 0.7;
+        }
+
+        .release-item {
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid rgba(var(--primary-color-rgb), 0.2);
+        }
+
+        .release-item:last-child {
+            border-bottom: none;
+        }
+
+        .release-version {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 0.3rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .release-version-badge {
+            background: linear-gradient(135deg,
+                rgba(var(--primary-color-rgb), 0.3),
+                rgba(var(--secondary-color-rgb), 0.3)
+            );
+            border: 1px solid rgba(var(--primary-color-rgb), 0.4);
+            padding: 0.2rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+
+        .release-date {
+            font-size: 0.85rem;
+            opacity: 0.8;
+            margin-bottom: 0.5rem;
+        }
+
+        .release-title {
+            font-size: 1rem;
+            font-weight: 500;
+            margin-bottom: 0.8rem;
+        }
+
+        .release-highlights {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .release-highlights li {
+            padding: 0.4rem 0 0.4rem 1.5rem;
+            position: relative;
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+
+        .release-highlights li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            color: var(--primary-color);
+            font-weight: bold;
+            text-shadow: 0 0 8px rgba(var(--primary-color-rgb), 0.6);
+        }
+
+        /* Scrollbar styling for release notes */
+        .release-notes::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .release-notes::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+        }
+
+        .release-notes::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg,
+                rgba(var(--primary-color-rgb), 0.5),
+                rgba(var(--secondary-color-rgb), 0.5)
+            );
+            border-radius: 4px;
+        }
+
+        .release-notes::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg,
+                rgba(var(--primary-color-rgb), 0.7),
+                rgba(var(--secondary-color-rgb), 0.7)
+            );
+        }
+
+        /* Right section - Login Form (1/3) */
+        .login-right {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-primary);
+            padding: 2rem;
+            position: relative;
+        }
+
+        .login-form-container {
+            width: 100%;
+            max-width: 400px;
+            animation: slideIn 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .login-form-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .login-form-title {
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+
+        .login-form-subtitle {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        /* Error message */
+        .error-message {
+            background: rgba(255, 68, 68, 0.15);
+            border: 1px solid rgba(255, 68, 68, 0.3);
+            border-radius: 12px;
+            padding: 0.875rem 1rem;
+            color: var(--danger);
+            font-size: 0.9rem;
+            display: none;
+            margin-bottom: 1.5rem;
+            animation: shake 0.4s ease;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        /* Form styles */
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-group label {
+            color: var(--text-light);
+            font-weight: 500;
+            font-size: 0.9rem;
+            padding-left: 0.25rem;
+        }
+
+        .form-input {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 0.875rem 1rem;
+            color: var(--text-light);
+            font-size: 1rem;
+            transition: all 0.2s ease;
+            outline: none;
+        }
+
+        .form-input:focus {
+            border-color: var(--primary-color);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow:
+                0 0 0 3px rgba(var(--primary-color-rgb), 0.1),
+                0 4px 12px rgba(var(--primary-color-rgb), 0.15);
+        }
+
+        .form-input::placeholder {
+            color: var(--text-muted);
+            opacity: 0.5;
+        }
+
+        /* HTTP Warning */
+        .http-warning {
+            background: linear-gradient(135deg, rgba(255, 170, 0, 0.15), rgba(255, 68, 68, 0.15));
+            border: 1px solid rgba(255, 170, 0, 0.3);
+            border-radius: 12px;
+            padding: 0.875rem 1rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            animation: warningPulse 2s infinite ease-in-out;
+        }
+
+        @keyframes warningPulse {
+            0%, 100% {
+                border-color: rgba(255, 170, 0, 0.3);
+            }
+            50% {
+                border-color: rgba(255, 170, 0, 0.5);
+            }
+        }
+
+        .http-warning-icon {
+            font-size: 1.2rem;
+            flex-shrink: 0;
+            filter: drop-shadow(0 2px 4px rgba(255, 170, 0, 0.4));
+        }
+
+        .http-warning-content {
+            flex: 1;
+        }
+
+        .http-warning-title {
+            font-weight: 600;
+            color: var(--warning);
+            margin-bottom: 0.25rem;
+            font-size: 0.85rem;
+        }
+
+        .http-warning-text {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            line-height: 1.4;
+        }
+
+        /* Login button */
+        .login-button {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            border: none;
+            border-radius: 12px;
+            padding: 1rem;
+            color: #000;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .login-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s;
+        }
+
+        .login-button:hover::before {
+            left: 100%;
+        }
+
+        .login-button:hover {
+            box-shadow: 0 8px 24px rgba(var(--primary-color-rgb), 0.4);
+        }
+
+        .login-button:active {
+            transform: scale(0.98);
+        }
+
+        .login-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .login-button.loading {
+            pointer-events: none;
+        }
+
+        .button-spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(0, 0, 0, 0.3);
+            border-top-color: #000;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Light theme adjustments */
+        body[data-theme="light"] .form-input {
+            background: rgba(0, 0, 0, 0.03);
+            border-color: rgba(0, 0, 0, 0.1);
+            color: #000;
+        }
+
+        body[data-theme="light"] .form-input:focus {
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        body[data-theme="light"] .login-button {
+            color: #fff;
+        }
+
+        /* Responsive design */
+        @media (max-width: 1024px) {
+            body {
+                flex-direction: column;
+            }
+
+            .login-left {
+                flex: none;
+                min-height: 40vh;
+            }
+
+            .login-left-content {
+                padding: 2rem;
+            }
+
+            .branding {
+                margin-bottom: 1.5rem;
+            }
+
+            .branding-logo {
+                width: 80px;
+                height: 80px;
+            }
+
+            .branding-title {
+                font-size: 2rem;
+            }
+
+            .branding-subtitle {
+                font-size: 1rem;
+            }
+
+            .release-notes {
+                padding: 1.5rem;
+            }
+
+            .login-right {
+                flex: none;
+                min-height: 60vh;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .login-left-content {
+                padding: 1.5rem;
+            }
+
+            .branding-logo {
+                width: 64px;
+                height: 64px;
+            }
+
+            .branding-title {
+                font-size: 1.75rem;
+            }
+
+            .release-notes {
+                padding: 1rem;
+            }
+
+            .release-notes-header {
+                font-size: 1.2rem;
+            }
+
+            .login-right {
+                padding: 1.5rem;
+            }
+
+            .login-form-title {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Left Section - Branding & Release Notes -->
+    <div class="login-left">
+        <div class="login-left-content">
+            <!-- Branding -->
+            <div class="branding">
+                <img src="/assets/logo.svg" alt="Vidnag Logo" class="branding-logo" onerror="this.onerror=null; this.src='/assets/logo.png';">
+                <h1 class="branding-title">Vidnag Framework</h1>
+                <p class="branding-subtitle">Video Download & Processing Platform</p>
+            </div>
+
+            <!-- Release Notes -->
+            <div class="release-notes" id="release-notes">
+                <div class="release-notes-header">Release Notes</div>
+                <div class="release-notes-loading">Loading release information...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Section - Login Form -->
+    <div class="login-right">
+        <div class="login-form-container">
+            <!-- Form header -->
+            <div class="login-form-header">
+                <h2 class="login-form-title">Welcome Back</h2>
+                <p class="login-form-subtitle">Sign in to continue</p>
+            </div>
+
+            <!-- Error message -->
+            <div id="error-message" class="error-message"></div>
+
+            <!-- Login form -->
+            <form id="login-form" class="login-form">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input
+                        type="text"
+                        id="username"
+                        name="username"
+                        class="form-input"
+                        placeholder="Enter your username"
+                        required
+                        autocomplete="username"
+                        autofocus
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        class="form-input"
+                        placeholder="Enter your password"
+                        required
+                        autocomplete="current-password"
+                    >
+                </div>
+
+                <!-- HTTP Warning -->
+                <div class="http-warning">
+                    <div class="http-warning-icon">⚠️</div>
+                    <div class="http-warning-content">
+                        <div class="http-warning-title">HTTP Connection Warning</div>
+                        <div class="http-warning-text">
+                            This connection is not secure. Use HTTPS in production.
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" id="login-button" class="login-button">
+                    Sign In
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Apply saved theme on page load
+        (function() {
+            const savedTheme = localStorage.getItem('theme') || 'dark';
+            const savedColorTheme = localStorage.getItem('colorTheme') || 'synthwave';
+
+            if (savedTheme === 'light') {
+                document.body.setAttribute('data-theme', 'light');
+            }
+            document.body.setAttribute('data-color-theme', savedColorTheme);
+        })();
+
+        // Load release notes
+        async function loadReleaseNotes() {
+            try {
+                const response = await fetch('/api/release-notes');
+                const data = await response.json();
+
+                const container = document.getElementById('release-notes');
+
+                if (!data.releases || data.releases.length === 0) {
+                    container.innerHTML = `
+                        <div class="release-notes-header">Release Notes</div>
+                        <div class="release-notes-loading">No release information available.</div>
+                    `;
+                    return;
+                }
+
+                let html = `<div class="release-notes-header">Release Notes v${data.current_version}</div>`;
+
+                data.releases.forEach(release => {
+                    html += `
+                        <div class="release-item">
+                            <div class="release-version">
+                                <span class="release-version-badge">v${release.version}</span>
+                            </div>
+                            <div class="release-date">${release.date}</div>
+                            <div class="release-title">${release.title}</div>
+                            <ul class="release-highlights">
+                                ${release.highlights.map(item => `<li>${item}</li>`).join('')}
+                            </ul>
+                        </div>
+                    `;
+                });
+
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Failed to load release notes:', error);
+                const container = document.getElementById('release-notes');
+                container.innerHTML = `
+                    <div class="release-notes-header">Release Notes</div>
+                    <div class="release-notes-loading">Failed to load release information.</div>
+                `;
+            }
+        }
+
+        // Load release notes on page load
+        loadReleaseNotes();
+
+        // Form submission
+        const form = document.getElementById('login-form');
+        const errorMessage = document.getElementById('error-message');
+        const loginButton = document.getElementById('login-button');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            // Clear previous errors
+            errorMessage.classList.remove('show');
+            errorMessage.textContent = '';
+
+            // Validate inputs
+            if (!username || !password) {
+                showError('Please enter both username and password');
+                return;
+            }
+
+            // Show loading state
+            loginButton.disabled = true;
+            loginButton.classList.add('loading');
+            loginButton.innerHTML = '<span class="button-spinner"></span> Signing In...';
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Store auth data
+                    localStorage.setItem('auth_token', data.access_token);
+                    localStorage.setItem('username', data.username);
+                    localStorage.setItem('is_admin', data.is_admin);
+
+                    // Show success animation
+                    loginButton.innerHTML = '✓ Success!';
+                    loginButton.style.background = 'linear-gradient(135deg, #00ff88, #00cc66)';
+
+                    // Redirect to main app
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 500);
+                } else {
+                    // Show error message
+                    showError(data.detail || 'Invalid username or password');
+                    resetButton();
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showError('Network error. Please check your connection and try again.');
+                resetButton();
+            }
+        });
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.add('show');
+        }
+
+        function resetButton() {
+            loginButton.disabled = false;
+            loginButton.classList.remove('loading');
+            loginButton.innerHTML = 'Sign In';
+        }
+
+        // Clear error on input
+        document.getElementById('username').addEventListener('input', () => {
+            errorMessage.classList.remove('show');
+        });
+        document.getElementById('password').addEventListener('input', () => {
+            errorMessage.classList.remove('show');
+        });
+    </script>
+</body>
+</html>

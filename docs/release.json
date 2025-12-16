@@ -1,0 +1,91 @@
+{
+  "current_version": "2.0.0-12",
+  "releases": [
+    {
+      "version": "2.0.0-12",
+      "date": "2024-12-16",
+      "title": "Authentication & Security Overhaul",
+      "highlights": [
+        "JWT-based authentication system with 24-hour sessions",
+        "User management with admin and standard user roles",
+        "Account lockout after 5 failed login attempts (30-min cooldown)",
+        "IP tracking and suspicious activity detection",
+        "Comprehensive audit logging for all auth events",
+        "Automatic JWT key rotation every 7 days",
+        "Protected all sensitive API endpoints",
+        "Modern split-screen login page with release notes"
+      ]
+    },
+    {
+      "version": "1.4.2-12",
+      "date": "2024-12-15",
+      "title": "Version Tracking & Domain Fixes",
+      "highlights": [
+        "Added comprehensive version tracking system",
+        "Fixed domain parsing for better URL handling",
+        "Updated branding to Vidnag Framework",
+        "Improved internal version management"
+      ]
+    },
+    {
+      "version": "1.4.0-12",
+      "date": "2024-12-14",
+      "title": "Queue System & Browser Localization",
+      "highlights": [
+        "Browser localization support for international users",
+        "Major queue system upgrade with better concurrency",
+        "Enhanced video processing tools",
+        "Database schema improvements and migrations",
+        "Improved error handling and logging"
+      ]
+    },
+    {
+      "version": "1.3.0-12",
+      "date": "2024-12-07",
+      "title": "Upload & Video Tools",
+      "highlights": [
+        "File upload functionality for local video processing",
+        "Simple video editing tools integration",
+        "Improved file management system",
+        "Enhanced video transformation capabilities"
+      ]
+    },
+    {
+      "version": "1.2.0-12",
+      "date": "2024-12-06",
+      "title": "Performance & Resource Optimization",
+      "highlights": [
+        "Memory leak audit and resource consolidation",
+        "UUID-based internal file handling for better tracking",
+        "Optimized disk space checks (downloads folder only)",
+        "Updated and pinned package dependencies",
+        "Video download progress display improvements"
+      ]
+    },
+    {
+      "version": "1.1.0-12",
+      "date": "2024-12-05",
+      "title": "Cookie Support & Cache Management",
+      "highlights": [
+        "YouTube cookie support for authenticated downloads",
+        "Instagram and X (Twitter) cookie integration",
+        "yt-dlp cache clearing functionality",
+        "First-run permissions check system",
+        "Updated YouTube extraction logic"
+      ]
+    },
+    {
+      "version": "1.0.0-12",
+      "date": "2024-12-05",
+      "title": "Initial Release",
+      "highlights": [
+        "Core video download functionality",
+        "yt-dlp integration for multi-platform support",
+        "Modern web interface with dark/light themes",
+        "Download queue management",
+        "Format selection and quality options",
+        "Real-time download progress tracking"
+      ]
+    }
+  ]
+}

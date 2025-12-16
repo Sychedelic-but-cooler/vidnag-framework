@@ -10,6 +10,7 @@ Settings include:
 - Rate limiting parameters
 - HTTPS enforcement
 - Debug logging control
+- yt-dlp update permissions
 
 No API endpoints expose these settings. All changes require:
 1. Edit admin_settings.json on disk
@@ -62,6 +63,25 @@ DEFAULT_ADMIN_SETTINGS = {
     "security": {
         "debug_proxy_headers": False,  # Disable header logging in production
         "validate_ip_format": True,
+        "allow_ytdlp_update": False,  # Disable yt-dlp updates by default for security
+    },
+    "auth": {
+        "enabled": False,  # Disabled by default for gradual rollout
+        "jwt_algorithm": "HS256",
+        "jwt_session_expiry_hours": 24,
+        "jwt_key_rotation_days": 7,
+        "failed_login_attempts_max": 5,
+        "failed_login_lockout_minutes": 30,
+        "suspicious_ip_threshold": 3,
+        "suspicious_ip_window_hours": 24,
+        "require_auth_for_all_endpoints": True,
+        "public_endpoints": [
+            "/",
+            "/favicon.ico",
+            "/api/auth/login",
+            "/api/auth/status",
+            "/assets/*"
+        ],
     },
 }
 
@@ -102,6 +122,22 @@ class SecurityConfig:
     """General security configuration"""
     debug_proxy_headers: bool
     validate_ip_format: bool
+    allow_ytdlp_update: bool
+
+
+@dataclass
+class AuthConfig:
+    """Authentication configuration"""
+    enabled: bool
+    jwt_algorithm: str
+    jwt_session_expiry_hours: int
+    jwt_key_rotation_days: int
+    failed_login_attempts_max: int
+    failed_login_lockout_minutes: int
+    suspicious_ip_threshold: int
+    suspicious_ip_window_hours: int
+    require_auth_for_all_endpoints: bool
+    public_endpoints: List[str]
 
 
 class AdminSettings:
@@ -183,11 +219,13 @@ class AdminSettings:
         proxy_data = self._settings.get("proxy", {})
         rate_limit_data = self._settings.get("rate_limiting", {})
         security_data = self._settings.get("security", {})
+        auth_data = self._settings.get("auth", {})
 
         self.cors = CORSConfig(**cors_data)
         self.proxy = ProxyConfig(**proxy_data)
         self.rate_limit = RateLimitConfig(**rate_limit_data)
         self.security = SecurityConfig(**security_data)
+        self.auth = AuthConfig(**auth_data)
 
     def _log_template(self):
         """Log a template of the admin_settings.json that should be created"""

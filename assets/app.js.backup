@@ -138,25 +138,15 @@ async function checkAuth() {
     try {
         // Check if auth is enabled
         const statusResponse = await fetch('/api/auth/status');
-
-        if (!statusResponse.ok) {
-            // SECURITY: Cannot verify auth status - fail closed by redirecting to login
-            // This prevents bypassing auth by causing errors
-            console.error('Failed to check auth status - assuming secure mode');
-            window.location.href = '/assets/login.html';
-            return;
-        }
-
         const statusData = await statusResponse.json();
 
-        // Only allow access if we get explicit confirmation that auth is disabled
-        if (statusData.auth_enabled === false) {
-            // Authentication is explicitly disabled - allow access
+        if (!statusData.auth_enabled) {
+            // Authentication is disabled - allow access
             console.log('Authentication is disabled');
             return;
         }
 
-        // Auth is enabled (or status unclear) - require authentication
+        // Auth is enabled - verify token
         const token = AUTH.getToken();
         if (!token) {
             // No token - redirect to login
@@ -180,9 +170,7 @@ async function checkAuth() {
         displayUserInfo(userData);
     } catch (error) {
         console.error('Auth check error:', error);
-        // SECURITY: On error, fail closed by redirecting to login
-        // Never assume auth is disabled on error - this would be a security bypass
-        console.error('Cannot verify authentication status - failing secure');
+        // On error, redirect to login
         window.location.href = '/assets/login.html';
     }
 }
@@ -638,7 +626,7 @@ function showDuplicateDialog(duplicates, newUrls) {
  */
 async function checkDuplicateUrls(urls) {
     try {
-        const response = await apiFetch(`${API_BASE}/api/downloads`);
+        const response = await fetch(`${API_BASE}/api/downloads`);
         if (!response.ok) return { duplicates: [], newUrls: urls };
 
         const downloads = await response.json();
@@ -752,7 +740,7 @@ async function submitDownload(event) {
         // This allows tracking and managing each download independently
         for (const url of urlsToDownload) {
             try {
-                const response = await apiFetch(`${API_BASE}/api/download`, {
+                const response = await fetch(`${API_BASE}/api/download`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -873,7 +861,7 @@ async function uploadFile(file, fileInput, uploadBtn) {
         uploadBtn.disabled = true;
         uploadBtn.innerHTML = '<span>⏳</span> Uploading...';
 
-        const response = await apiFetch(`${API_BASE}/api/upload`, {
+        const response = await fetch(`${API_BASE}/api/upload`, {
             method: 'POST',
             body: formData
         });
@@ -1021,7 +1009,7 @@ function initDragAndDrop() {
  */
 async function loadDownloads() {
     try {
-        const response = await apiFetch(`${API_BASE}/api/downloads`);
+        const response = await fetch(`${API_BASE}/api/downloads`);
         if (!response.ok) throw new Error('Failed to load downloads');
 
         const downloads = await response.json();
@@ -1287,7 +1275,7 @@ async function deleteDownload(downloadId, event) {
         button.disabled = true;
 
         try {
-            const response = await apiFetch(`${API_BASE}/api/downloads/${downloadId}`, {
+            const response = await fetch(`${API_BASE}/api/downloads/${downloadId}`, {
                 method: 'DELETE'
             });
 
@@ -1466,7 +1454,7 @@ function playVideo(downloadId, title) {
 // Settings Management
 async function loadVersionInfo() {
     try {
-        const response = await apiFetch(`${API_BASE}/api/settings/version`);
+        const response = await fetch(`${API_BASE}/api/settings/version`);
         if (!response.ok) throw new Error('Failed to load version info');
 
         const data = await response.json();
@@ -1481,7 +1469,7 @@ async function loadVersionInfo() {
 
 async function loadQueueSettings() {
     try {
-        const response = await apiFetch(`${API_BASE}/api/settings/queue`);
+        const response = await fetch(`${API_BASE}/api/settings/queue`);
         if (!response.ok) throw new Error('Failed to load queue settings');
 
         const data = await response.json();
@@ -1508,7 +1496,7 @@ async function saveQueueSettings() {
             min_disk_space_mb: parseInt(document.getElementById('min-disk-space').value)
         };
 
-        const response = await apiFetch(`${API_BASE}/api/settings/queue`, {
+        const response = await fetch(`${API_BASE}/api/settings/queue`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1777,7 +1765,7 @@ async function loadHardwareInfo() {
     container.innerHTML = '<p class="empty-state">Loading hardware information...</p>';
 
     try {
-        const response = await apiFetch(`${API_BASE}/api/hardware/info`);
+        const response = await fetch(`${API_BASE}/api/hardware/info`);
         if (!response.ok) throw new Error('Failed to load hardware info');
 
         const data = await response.json();
@@ -1812,7 +1800,7 @@ async function refreshHardwareInfo() {
 
     try {
         // Call the refresh endpoint to re-detect hardware
-        const response = await apiFetch(`${API_BASE}/api/hardware/refresh`, {
+        const response = await fetch(`${API_BASE}/api/hardware/refresh`, {
             method: 'POST'
         });
 
@@ -1870,7 +1858,7 @@ let helpDocumentation = null;
 
 async function loadHelpDocumentation() {
     try {
-        const response = await apiFetch('/assets/documentation.json');
+        const response = await fetch('/assets/documentation.json');
         if (!response.ok) throw new Error('Failed to load documentation');
         helpDocumentation = await response.json();
         renderHelpMainView();
@@ -1989,7 +1977,7 @@ async function updateYtdlp() {
     button.textContent = 'Updating...';
 
     try {
-        const response = await apiFetch(`${API_BASE}/api/settings/update-ytdlp`, {
+        const response = await fetch(`${API_BASE}/api/settings/update-ytdlp`, {
             method: 'POST'
         });
 
@@ -2023,7 +2011,7 @@ async function clearYtdlpCache() {
     button.textContent = 'Clearing...';
 
     try {
-        const response = await apiFetch(`${API_BASE}/api/settings/clear-ytdlp-cache`, {
+        const response = await fetch(`${API_BASE}/api/settings/clear-ytdlp-cache`, {
             method: 'POST'
         });
 
@@ -2055,7 +2043,7 @@ async function cleanupDownloads() {
     button.textContent = 'Cleaning up...';
 
     try {
-        const response = await apiFetch(`${API_BASE}/api/downloads/cleanup?days=${days}`, {
+        const response = await fetch(`${API_BASE}/api/downloads/cleanup?days=${days}`, {
             method: 'POST'
         });
 
@@ -2094,7 +2082,7 @@ async function cleanupStaleConversions() {
     button.textContent = 'Cleaning up...';
 
     try {
-        const response = await apiFetch(`${API_BASE}/api/tools/conversions/cleanup?hours=${hours}`, {
+        const response = await fetch(`${API_BASE}/api/tools/conversions/cleanup?hours=${hours}`, {
             method: 'POST'
         });
 
@@ -2126,7 +2114,7 @@ async function loadCookieFilesSettings() {
     const container = document.getElementById('cookie-files-list');
 
     try {
-        const response = await apiFetch(`${API_BASE}/api/settings/cookies`);
+        const response = await fetch(`${API_BASE}/api/settings/cookies`);
 
         if (!response.ok) throw new Error('Failed to load cookie files');
 
@@ -2297,7 +2285,7 @@ async function uploadCookieFileSettings(file, filename) {
         const renamedFile = new File([file], filename, { type: file.type });
         formData.append('file', renamedFile);
 
-        const response = await apiFetch(`${API_BASE}/api/settings/cookies/upload`, {
+        const response = await fetch(`${API_BASE}/api/settings/cookies/upload`, {
             method: 'POST',
             body: formData
         });
@@ -2330,7 +2318,7 @@ async function deleteCookieFileSettings(filename) {
     }
 
     try {
-        const response = await apiFetch(`${API_BASE}/api/settings/cookies/${encodeURIComponent(filename)}`, {
+        const response = await fetch(`${API_BASE}/api/settings/cookies/${encodeURIComponent(filename)}`, {
             method: 'DELETE'
         });
 
@@ -2359,7 +2347,7 @@ async function deleteCookieFileSettings(filename) {
 // Load cookie files
 async function loadCookieFiles() {
     try {
-        const response = await apiFetch(`${API_BASE}/api/cookies`);
+        const response = await fetch(`${API_BASE}/api/cookies`);
         if (response.ok) {
             const files = await response.json();
             const select = document.getElementById('cookies-file');
@@ -2506,7 +2494,7 @@ async function pollLogs() {
             params.append('since_sequence', latestLogSequence);
         }
 
-        const response = await apiFetch(`${API_BASE}/api/logs?${params}`);
+        const response = await fetch(`${API_BASE}/api/logs?${params}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -2667,7 +2655,7 @@ function toggleAccessibility() {
  */
 async function loadDomainMappings() {
     try {
-        const response = await apiFetch(`${API_BASE}/assets/domain_mappings.json`);
+        const response = await fetch(`${API_BASE}/assets/domain_mappings.json`);
         if (!response.ok) {
             console.warn('Could not load domain_mappings.json, using fallback');
             return;
@@ -2797,7 +2785,7 @@ let allFiles = []; // Store all files for sorting
 
 async function loadFiles() {
     try {
-        const response = await apiFetch(`${API_BASE}/api/files`);
+        const response = await fetch(`${API_BASE}/api/files`);
         if (!response.ok) throw new Error('Failed to load files');
 
         allFiles = await response.json();
@@ -3000,7 +2988,7 @@ async function deleteFile(downloadId, event) {
         button.disabled = true;
 
         try {
-            const response = await apiFetch(`${API_BASE}/api/files/${downloadId}`, {
+            const response = await fetch(`${API_BASE}/api/files/${downloadId}`, {
                 method: 'DELETE'
             });
 
@@ -3083,7 +3071,7 @@ async function deleteSelectedFiles(event) {
 
         for (const downloadId of selectedFiles) {
             try {
-                const response = await apiFetch(`${API_BASE}/api/files/${downloadId}`, {
+                const response = await fetch(`${API_BASE}/api/files/${downloadId}`, {
                     method: 'DELETE'
                 });
 
@@ -3160,7 +3148,7 @@ async function downloadSelectedAsZip() {
         downloadBtn.innerHTML = '<span>🔢</span> Calculating...';
 
         // First, calculate the estimated size
-        const sizeResponse = await apiFetch(`${API_BASE}/api/files/calculate-zip-size`, {
+        const sizeResponse = await fetch(`${API_BASE}/api/files/calculate-zip-size`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -3185,7 +3173,7 @@ async function downloadSelectedAsZip() {
         // Update button to creating state
         downloadBtn.innerHTML = '<span>⏳</span> Creating ZIP...';
 
-        const response = await apiFetch(`${API_BASE}/api/files/download-zip`, {
+        const response = await fetch(`${API_BASE}/api/files/download-zip`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -3241,7 +3229,7 @@ async function loadToolsTab() {
  */
 async function loadSourceVideosForTools() {
     try {
-        const response = await apiFetch(`${API_BASE}/api/files`);
+        const response = await fetch(`${API_BASE}/api/files`);
         const files = await response.json();
 
         // Populate MP3 source dropdown
@@ -3324,7 +3312,7 @@ async function submitVideoToMp3Conversion() {
     try {
         console.log('Starting MP3 conversion:', { sourceId, quality });
 
-        const response = await apiFetch(`${API_BASE}/api/tools/video-to-mp3`, {
+        const response = await fetch(`${API_BASE}/api/tools/video-to-mp3`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3385,7 +3373,7 @@ async function submitVideoToMp3Conversion() {
 async function loadConversions() {
     try {
         console.log('Loading conversions from API...');
-        const response = await apiFetch(`${API_BASE}/api/tools/conversions`);
+        const response = await fetch(`${API_BASE}/api/tools/conversions`);
 
         if (!response.ok) {
             console.error('Failed to fetch conversions:', response.status);
@@ -3568,7 +3556,7 @@ async function cancelConversion(conversionId) {
     }
 
     try {
-        const response = await apiFetch(`${API_BASE}/api/tools/conversions/${conversionId}/cancel`, {
+        const response = await fetch(`${API_BASE}/api/tools/conversions/${conversionId}/cancel`, {
             method: 'POST'
         });
 
@@ -3695,7 +3683,7 @@ async function deleteCompletedConversion(conversionId, event) {
         button.disabled = true;
 
         try {
-            const response = await apiFetch(`${API_BASE}/api/tools/conversions/${conversionId}`, {
+            const response = await fetch(`${API_BASE}/api/tools/conversions/${conversionId}`, {
                 method: 'DELETE'
             });
 
@@ -3773,7 +3761,7 @@ async function applyVideoTransformation() {
         btn.disabled = true;
         btn.innerHTML = 'Transforming...';
 
-        const response = await apiFetch(`${API_BASE}/api/tools/transform`, {
+        const response = await fetch(`${API_BASE}/api/tools/transform`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

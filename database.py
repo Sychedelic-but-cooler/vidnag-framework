@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, Enum, event
+from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, Enum, Boolean, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
@@ -148,6 +148,84 @@ class ToolConversion(Base):
     error_message = Column(String, nullable=True)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     completed_at = Column(UTCDateTime, nullable=True)
+
+
+class User(Base):
+    """
+    Database model for user accounts.
+    Stores user credentials and authentication settings.
+    """
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    is_disabled = Column(Boolean, default=False, nullable=False, index=True)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    last_login = Column(UTCDateTime, nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class UserLoginHistory(Base):
+    """
+    Database model for tracking all login attempts (successful and failed).
+    Used for IP tracking and suspicious activity detection.
+    """
+    __tablename__ = "user_login_history"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=True, index=True)  # Nullable in case user doesn't exist
+    ip_address = Column(String, nullable=False)
+    login_time = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    success = Column(Boolean, nullable=False)
+    failure_reason = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+
+
+class JWTKey(Base):
+    """
+    Database model for JWT signing keys.
+    Supports key rotation for enhanced security.
+    """
+    __tablename__ = "jwt_keys"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    key_value = Column(String, nullable=False)  # Base64-encoded secret key
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    expires_at = Column(UTCDateTime, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    revoked_at = Column(UTCDateTime, nullable=True)
+
+
+class AuthAuditLog(Base):
+    """
+    Database model for authentication audit trail.
+    Records all authentication-related events for security monitoring.
+    """
+    __tablename__ = "auth_audit_log"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_type = Column(String, nullable=False, index=True)  # login_success, login_failed, logout, etc.
+    user_id = Column(String, nullable=True, index=True)  # Nullable if user lookup failed
+    username = Column(String, nullable=True)
+    ip_address = Column(String, nullable=False)
+    details = Column(String, nullable=True)  # JSON string with additional context
+    timestamp = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+
+
+class FailedLoginAttempt(Base):
+    """
+    Database model for tracking failed login attempts.
+    Used for account lockout after too many failures.
+    """
+    __tablename__ = "failed_login_attempts"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String, nullable=False, index=True)
+    ip_address = Column(String, nullable=False)
+    attempt_time = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    lockout_until = Column(UTCDateTime, nullable=True)  # Set when threshold reached
 
 
 def init_db():

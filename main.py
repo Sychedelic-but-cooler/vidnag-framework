@@ -6,10 +6,11 @@ file browsing, and comprehensive logging.
 """
 
 # FastAPI and web framework imports
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request, UploadFile, File, Form, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # Data validation and database
 from pydantic import BaseModel, ConfigDict
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 
 # Type hints for better code clarity
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 # Data structures and utilities
@@ -40,7 +41,7 @@ import uuid
 import platform
 
 # Application modules
-from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db
+from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt
 from settings import settings
 from admin_settings import get_admin_settings
 from security import (
@@ -51,6 +52,10 @@ from security import (
     validate_cookie_filename,
     validate_settings_update
 )
+from auth import PasswordService, JWTService, AuthService, AuditLogService
+
+# Application version (Major.Minor.Bugfix-ReleaseMonth)
+APP_VERSION = "2.0.0-12"
 
 def cleanup_old_logs():
     """
@@ -184,6 +189,7 @@ async def lifespan(app: FastAPI):
 
     # Log startup information for diagnostics
     await emit_log("INFO", "System", "Application started successfully")
+    await emit_log("INFO", "System", f"Vidnag Framework version: {APP_VERSION}")
     await emit_log("INFO", "System", f"Download queue started (max concurrent: {settings.get('max_concurrent_downloads', 2)})")
     await emit_log("INFO", "System", f"Conversion queue started (max concurrent: {settings.get('max_concurrent_conversions', 1)})")
     await emit_log("INFO", "System", f"Python version: {os.sys.version}")
@@ -1212,6 +1218,56 @@ class VideoTransformRequest(BaseModel):
     transform_type: str                      # Type of transformation (hflip, vflip, rotate90, rotate180, rotate270)
 
 
+# Authentication Pydantic Models
+class LoginRequest(BaseModel):
+    """Request body for user login"""
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    """Response body for successful login"""
+    access_token: str
+    token_type: str
+    expires_in: int  # seconds
+    username: str
+    is_admin: bool
+
+
+class UserInfoResponse(BaseModel):
+    """Response body for current user info"""
+    user_id: str
+    username: str
+    is_admin: bool
+    last_login: Optional[datetime]
+
+
+class UserResponse(BaseModel):
+    """Response model for user data"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    username: str
+    is_admin: bool
+    is_disabled: bool
+    created_at: datetime
+    last_login: Optional[datetime]
+
+
+class CreateUserRequest(BaseModel):
+    """Request body for creating a new user"""
+    username: str
+    password: str
+    is_admin: bool = False
+
+
+class UpdateUserRequest(BaseModel):
+    """Request body for updating a user"""
+    is_admin: Optional[bool] = None
+    is_disabled: Optional[bool] = None
+    new_password: Optional[str] = None
+
+
 # Database Service - Handles all database operations
 class DatabaseService:
     """
@@ -1477,7 +1533,7 @@ class YtdlpService:
 
                     # Log all stderr as warnings or errors
                     level = "ERROR" if "error" in line_str.lower() else "WARNING"
-                    await emit_log(level, "YT-DLP-ERR", line_str, download_id)
+                    await emit_log(level, "YT-DLP", line_str, download_id)
 
             # Run both readers concurrently
             await asyncio.gather(read_stdout(), read_stderr())
@@ -2149,14 +2205,655 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+# Authentication Dependencies
+security = HTTPBearer(auto_error=False)
+
+
+async def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: Session = Depends(get_db_session)
+) -> Dict[str, Any]:
+    """
+    FastAPI dependency to extract and validate JWT token.
+    Raises 401 if token is missing or invalid.
+
+    This dependency:
+    - Checks if authentication is enabled
+    - Validates public endpoint whitelist
+    - Validates JWT token
+    - Verifies user exists and is not disabled
+    """
+    # Try to load admin settings
+    admin_settings = None
+    auth_enabled = True  # SECURITY: Fail secure by default
+
+    try:
+        admin_settings = get_admin_settings()
+        # Check if auth config exists and is explicitly set to false
+        if hasattr(admin_settings, 'auth') and hasattr(admin_settings.auth, 'enabled'):
+            auth_enabled = admin_settings.auth.enabled
+            if auth_enabled is False:
+                # Auth explicitly disabled - allow access with dummy user
+                return {"sub": "system", "username": "system", "is_admin": True}
+        else:
+            # Auth config missing - fail secure by requiring authentication
+            pass
+    except Exception as e:
+        # Error loading settings - fail secure by requiring authentication
+        pass
+
+    # Auth is enabled (or config missing) - check if this endpoint is public
+    if admin_settings and hasattr(admin_settings, 'auth'):
+        try:
+            path = request.url.path
+            for public_pattern in admin_settings.auth.public_endpoints:
+                if public_pattern.endswith("*"):
+                    # Wildcard match
+                    if path.startswith(public_pattern[:-1]):
+                        return {"sub": "public", "username": "public", "is_admin": False}
+                elif path == public_pattern:
+                    # Exact match
+                    return {"sub": "public", "username": "public", "is_admin": False}
+        except (AttributeError, Exception):
+            # If we can't check public endpoints, continue to token validation
+            pass
+
+    # Require authentication
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Check if we have valid admin_settings for token validation
+    if not admin_settings:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication system unavailable - server configuration error"
+        )
+
+    # Validate token
+    payload = JWTService.decode_token(credentials.credentials, db, admin_settings)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Check if user still exists and is not disabled
+    user = db.query(User).filter(User.id == payload["sub"]).first()
+    if not user or user.is_disabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is disabled",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return payload
+
+
+async def get_current_admin_user(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    FastAPI dependency to require admin privileges.
+    Raises 403 if user is not an admin.
+    """
+    if not current_user.get("is_admin", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user
+
+
 # API Endpoints
 
+# ===========================
+# Authentication Endpoints
+# ===========================
+
+@app.post("/api/auth/login", response_model=LoginResponse)
+async def login(
+    request: Request,
+    login_data: LoginRequest,
+    db: Session = Depends(get_db_session)
+):
+    """
+    Authenticate user and return JWT token.
+
+    Performs comprehensive authentication including:
+    - Account lockout check
+    - User existence verification
+    - Password verification
+    - Suspicious IP activity detection
+    - Login history recording
+    - Audit logging
+    """
+    admin_settings = get_admin_settings()
+
+    # Extract client info
+    ip_address = get_client_ip(request)
+    user_agent = request.headers.get("user-agent", "unknown")
+
+    # Authenticate user
+    success, user, error_message = AuthService.authenticate_user(
+        username=login_data.username,
+        password=login_data.password,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        db=db,
+        admin_settings=admin_settings
+    )
+
+    if not success:
+        # Record login attempt in history
+        login_history = UserLoginHistory(
+            user_id=user.id if user else None,
+            ip_address=ip_address,
+            success=False,
+            failure_reason=error_message,
+            user_agent=user_agent
+        )
+        db.add(login_history)
+        db.commit()
+
+        # Log audit event
+        AuditLogService.log_event(
+            event_type="login_failed",
+            ip_address=ip_address,
+            db=db,
+            username=login_data.username,
+            details={"reason": error_message}
+        )
+
+        # Return error
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=error_message
+        )
+
+    # Generate JWT token
+    access_token = JWTService.create_access_token(
+        user_id=user.id,
+        username=user.username,
+        is_admin=user.is_admin,
+        db=db,
+        admin_settings=admin_settings
+    )
+
+    # Record successful login in history
+    login_history = UserLoginHistory(
+        user_id=user.id,
+        ip_address=ip_address,
+        success=True,
+        failure_reason=None,
+        user_agent=user_agent
+    )
+    db.add(login_history)
+    db.commit()
+
+    # Log audit event
+    AuditLogService.log_event(
+        event_type="login_success",
+        ip_address=ip_address,
+        db=db,
+        user_id=user.id,
+        username=user.username
+    )
+
+    await emit_log("INFO", "Authentication", f"User {user.username} logged in from {ip_address}")
+
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=admin_settings.auth.jwt_session_expiry_hours * 3600,  # Convert to seconds
+        username=user.username,
+        is_admin=user.is_admin
+    )
+
+
+@app.post("/api/auth/logout")
+async def logout(
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Logout user (client-side token deletion).
+
+    Note: JWT tokens are stateless, so this endpoint primarily serves
+    to log the logout event for audit purposes. The client must delete
+    the token from storage.
+    """
+    ip_address = get_client_ip(request)
+
+    # Log audit event
+    AuditLogService.log_event(
+        event_type="logout",
+        ip_address=ip_address,
+        db=db,
+        user_id=current_user.get("sub"),
+        username=current_user.get("username")
+    )
+
+    await emit_log("INFO", "Authentication", f"User {current_user.get('username')} logged out from {ip_address}")
+
+    return {"message": "Logged out successfully"}
+
+
+@app.post("/api/auth/refresh", response_model=LoginResponse)
+async def refresh_token(
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Refresh JWT token with new expiry.
+
+    Validates current token and issues a new one with extended expiry.
+    Useful for keeping users logged in during active sessions.
+    """
+    admin_settings = get_admin_settings()
+    ip_address = get_client_ip(request)
+
+    # Get user from database
+    user = db.query(User).filter(User.id == current_user["sub"]).first()
+    if not user or user.is_disabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is disabled"
+        )
+
+    # Generate new token
+    access_token = JWTService.create_access_token(
+        user_id=user.id,
+        username=user.username,
+        is_admin=user.is_admin,
+        db=db,
+        admin_settings=admin_settings
+    )
+
+    # Log audit event
+    AuditLogService.log_event(
+        event_type="token_refresh",
+        ip_address=ip_address,
+        db=db,
+        user_id=user.id,
+        username=user.username
+    )
+
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=admin_settings.auth.jwt_session_expiry_hours * 3600,
+        username=user.username,
+        is_admin=user.is_admin
+    )
+
+
+@app.get("/api/auth/me", response_model=UserInfoResponse)
+async def get_current_user_info(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Get current user information.
+
+    Returns details about the authenticated user.
+    """
+    user = db.query(User).filter(User.id == current_user["sub"]).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    return UserInfoResponse(
+        user_id=user.id,
+        username=user.username,
+        is_admin=user.is_admin,
+        last_login=user.last_login
+    )
+
+
+@app.get("/api/auth/status")
+async def get_auth_status():
+    """
+    Get authentication system status (PUBLIC endpoint).
+
+    Returns whether authentication is enabled and session configuration.
+    Used by frontend to determine if login is required.
+
+    SECURITY: Fails secure - if config can't be loaded, reports auth as enabled.
+    """
+    try:
+        admin_settings = get_admin_settings()
+
+        # Check if auth config exists
+        if hasattr(admin_settings, 'auth') and hasattr(admin_settings.auth, 'enabled'):
+            auth_enabled = admin_settings.auth.enabled
+            session_expiry = admin_settings.auth.jwt_session_expiry_hours
+        else:
+            # Config missing - fail secure by reporting auth as enabled
+            auth_enabled = True
+            session_expiry = 24  # Default value
+
+    except Exception:
+        # Error loading config - fail secure by reporting auth as enabled
+        auth_enabled = True
+        session_expiry = 24  # Default value
+
+    return {
+        "auth_enabled": auth_enabled,
+        "session_expiry_hours": session_expiry
+    }
+
+
+@app.get("/api/release-notes")
+async def get_release_notes():
+    """
+    Get release notes from docs/release.json (PUBLIC endpoint).
+
+    Returns version information and release history.
+    Used by login page to display release notes.
+    Current version is always pulled from APP_VERSION constant.
+    """
+    try:
+        import json
+        with open("docs/release.json", "r") as f:
+            release_data = json.load(f)
+        # Override current_version with APP_VERSION (single source of truth)
+        release_data["current_version"] = APP_VERSION
+        return release_data
+    except FileNotFoundError:
+        return {
+            "current_version": APP_VERSION,
+            "releases": []
+        }
+    except Exception as e:
+        return {
+            "current_version": APP_VERSION,
+            "releases": [],
+            "error": "Failed to load release notes"
+        }
+
+
+# ===========================
+# User Management Endpoints (Admin Only)
+# ===========================
+
+@app.post("/api/users", response_model=UserResponse)
+async def create_user(
+    request: Request,
+    user_data: CreateUserRequest,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Create a new user (ADMIN ONLY).
+
+    Validates username format and password strength, then creates
+    a new user account with hashed password.
+    """
+    admin_settings = get_admin_settings()
+    ip_address = get_client_ip(request)
+
+    # Validate username (3-32 alphanumeric chars, underscore allowed)
+    if not user_data.username or len(user_data.username) < 3 or len(user_data.username) > 32:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username must be 3-32 characters"
+        )
+
+    if not user_data.username.replace("_", "").isalnum():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username must contain only alphanumeric characters and underscores"
+        )
+
+    # Validate password (min 8 chars)
+    if not user_data.password or len(user_data.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters"
+        )
+
+    # Check if username already exists
+    existing_user = db.query(User).filter(User.username == user_data.username).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already exists"
+        )
+
+    # Hash password
+    password_hash = PasswordService.hash_password(user_data.password)
+
+    # Create user
+    new_user = User(
+        username=user_data.username,
+        password_hash=password_hash,
+        is_admin=user_data.is_admin,
+        is_disabled=False
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    # Log audit event
+    AuditLogService.log_event(
+        event_type="user_created",
+        ip_address=ip_address,
+        db=db,
+        user_id=current_admin.get("sub"),
+        username=current_admin.get("username"),
+        details={
+            "created_user_id": new_user.id,
+            "created_username": new_user.username,
+            "is_admin": new_user.is_admin
+        }
+    )
+
+    await emit_log("INFO", "User Management", f"Admin {current_admin.get('username')} created user {new_user.username}")
+
+    return UserResponse.model_validate(new_user)
+
+
+@app.get("/api/users", response_model=List[UserResponse])
+async def list_users(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    List all users (ADMIN ONLY).
+
+    Returns all user accounts with their metadata.
+    """
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    return [UserResponse.model_validate(user) for user in users]
+
+
+@app.patch("/api/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: str,
+    request: Request,
+    update_data: UpdateUserRequest,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Update user account (ADMIN ONLY).
+
+    Can update: is_admin, is_disabled, password.
+    Prevents admins from disabling their own accounts.
+    """
+    ip_address = get_client_ip(request)
+
+    # Find user
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    changes = {}
+
+    # Update is_admin
+    if update_data.is_admin is not None:
+        old_value = user.is_admin
+        user.is_admin = update_data.is_admin
+        changes["is_admin"] = {"from": old_value, "to": update_data.is_admin}
+
+    # Update is_disabled
+    if update_data.is_disabled is not None:
+        # Prevent self-disable
+        if user.id == current_admin.get("sub") and update_data.is_disabled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot disable your own account"
+            )
+
+        old_value = user.is_disabled
+        user.is_disabled = update_data.is_disabled
+        changes["is_disabled"] = {"from": old_value, "to": update_data.is_disabled}
+
+        # If enabling account, clear failed login attempts
+        if not update_data.is_disabled:
+            AuthService.clear_failed_attempts(user.username, db)
+
+    # Update password
+    if update_data.new_password:
+        if len(update_data.new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters"
+            )
+
+        user.password_hash = PasswordService.hash_password(update_data.new_password)
+        changes["password"] = "updated"
+
+    user.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(user)
+
+    # Log audit event
+    AuditLogService.log_event(
+        event_type="user_updated",
+        ip_address=ip_address,
+        db=db,
+        user_id=current_admin.get("sub"),
+        username=current_admin.get("username"),
+        details={
+            "updated_user_id": user.id,
+            "updated_username": user.username,
+            "changes": changes
+        }
+    )
+
+    await emit_log("INFO", "User Management", f"Admin {current_admin.get('username')} updated user {user.username}")
+
+    return UserResponse.model_validate(user)
+
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    request: Request,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Delete user account (ADMIN ONLY).
+
+    Prevents self-deletion. Deletes user and all associated records.
+    """
+    ip_address = get_client_ip(request)
+
+    # Prevent self-deletion
+    if user_id == current_admin.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+
+    # Find user
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    username = user.username
+
+    # Delete associated records
+    db.query(UserLoginHistory).filter(UserLoginHistory.user_id == user_id).delete()
+    db.query(FailedLoginAttempt).filter(FailedLoginAttempt.username == username).delete()
+
+    # Delete user
+    db.delete(user)
+    db.commit()
+
+    # Log audit event
+    AuditLogService.log_event(
+        event_type="user_deleted",
+        ip_address=ip_address,
+        db=db,
+        user_id=current_admin.get("sub"),
+        username=current_admin.get("username"),
+        details={
+            "deleted_user_id": user_id,
+            "deleted_username": username
+        }
+    )
+
+    await emit_log("INFO", "User Management", f"Admin {current_admin.get('username')} deleted user {username}")
+
+    return {"message": f"User {username} deleted successfully"}
+
+
 @app.get("/")
-async def root():
-    """Serve the main HTML page"""
-    with open("assets/index.html") as f:
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse(content=f.read())
+async def root(request: Request):
+    """
+    Serve the main HTML page or redirect to login.
+
+    If authentication is enabled, checks for valid token in Authorization header
+    or as a query parameter (for browser redirects). If token is invalid or missing,
+    redirects to login page.
+    """
+    from fastapi.responses import HTMLResponse, RedirectResponse
+
+    admin_settings = get_admin_settings()
+
+    # If auth is disabled, serve main page directly
+    if not admin_settings.auth.enabled:
+        with open("assets/index.html") as f:
+            return HTMLResponse(content=f.read())
+
+    # Auth is enabled - check for token
+    # Try to get token from Authorization header first
+    auth_header = request.headers.get('authorization', '')
+    token = None
+
+    if auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+
+    if token:
+        # Validate token
+        with get_db() as db:
+            payload = JWTService.decode_token(token, db, admin_settings)
+            if payload:
+                # Valid token - serve main page
+                with open("assets/index.html") as f:
+                    return HTMLResponse(content=f.read())
+
+    # No valid token - redirect to login
+    return RedirectResponse(url='/assets/login.html')
 
 
 @app.get("/favicon.ico")
@@ -2174,7 +2871,7 @@ async def test_log():
 
 
 @app.post("/api/download", response_model=DownloadResponse)
-async def start_download(request: DownloadRequest, http_request: Request, db: Session = Depends(get_db_session)):
+async def start_download(request: DownloadRequest, http_request: Request, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Start a new video download"""
     # Get client IP (from proxy headers middleware)
     client_ip = getattr(http_request.state, 'client_ip', 'unknown')
@@ -2222,6 +2919,7 @@ async def start_download(request: DownloadRequest, http_request: Request, db: Se
 async def upload_video(
     file: UploadFile = File(...),
     http_request: Request = None,
+    current_user: Dict[str, Any] = Depends(get_current_user),
     db: Session = Depends(get_db_session)
 ):
     """
@@ -2359,7 +3057,7 @@ async def upload_video(
 
 
 @app.get("/api/downloads", response_model=List[DownloadResponse])
-async def get_downloads(status: Optional[str] = None, db: Session = Depends(get_db_session)):
+async def get_downloads(status: Optional[str] = None, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Get all downloads, optionally filtered by status"""
     if status:
         try:
@@ -2374,7 +3072,7 @@ async def get_downloads(status: Optional[str] = None, db: Session = Depends(get_
 
 
 @app.get("/api/downloads/{download_id}", response_model=DownloadResponse)
-async def get_download(download_id: str, db: Session = Depends(get_db_session)):
+async def get_download(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Get a specific download by ID"""
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
@@ -2383,7 +3081,7 @@ async def get_download(download_id: str, db: Session = Depends(get_db_session)):
 
 
 @app.delete("/api/downloads/{download_id}")
-async def delete_download(download_id: str, db: Session = Depends(get_db_session)):
+async def delete_download(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Delete a download and its associated file"""
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
@@ -2420,7 +3118,7 @@ async def delete_download(download_id: str, db: Session = Depends(get_db_session
 
 
 @app.post("/api/downloads/cleanup", response_model=CleanupStats)
-async def cleanup_downloads(days: int = 7, db: Session = Depends(get_db_session)):
+async def cleanup_downloads(days: int = 7, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Clean up failed downloads older than specified days and remove orphaned files"""
 
     await emit_log("INFO", "Cleanup", f"Starting cleanup of downloads older than {days} days")
@@ -2542,7 +3240,8 @@ async def get_logs(
     level: Optional[str] = None,
     component: Optional[str] = None,
     download_id: Optional[str] = None,
-    since_sequence: Optional[int] = None
+    since_sequence: Optional[int] = None,
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """Get logs with optional filtering and incremental updates"""
     logs = list(log_buffer)
@@ -2640,7 +3339,7 @@ async def logs_websocket(websocket: WebSocket):
 
 
 @app.get("/api/settings/version", response_model=VersionInfo)
-async def get_version():
+async def get_version(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Get yt-dlp and app version"""
     try:
         result = subprocess.run(
@@ -2654,7 +3353,7 @@ async def get_version():
 
     return VersionInfo(
         ytdlp_version=ytdlp_version,
-        app_version="1.4.0-12"
+        app_version=APP_VERSION
     )
 
 
@@ -2684,7 +3383,7 @@ async def get_disk_space():
 
 
 @app.get("/api/cookies")
-async def get_cookies():
+async def get_cookies(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Get list of available cookie files"""
     try:
         if not os.path.exists("cookies"):
@@ -2700,29 +3399,29 @@ async def get_cookies():
 
 
 @app.get("/api/settings/queue")
-async def get_queue_settings():
+async def get_queue_settings(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Get queue and download settings"""
     return settings.get_all()
 
 
 @app.post("/api/settings/queue")
-async def update_queue_settings(updates: dict):
+async def update_queue_settings(updates: dict, current_user: Dict[str, Any] = Depends(get_current_user)):
     """Update queue and download settings"""
     # Security: Validate settings
     is_valid, error_msg = validate_settings_update(updates)
     if not is_valid:
-        await emit_log("WARNING", "Settings", f"Invalid settings update rejected: {error_msg}")
+        await emit_log("WARNING", "System", f"Invalid settings update rejected: {error_msg}")
         raise HTTPException(status_code=400, detail=error_msg)
 
     settings.update(updates)
-    await emit_log("INFO", "Settings", f"Queue settings updated: {updates}")
+    await emit_log("INFO", "System", f"Queue settings updated: {updates}")
     return {"message": "Settings updated successfully", "settings": settings.get_all()}
 
 
 @app.post("/api/settings/update-ytdlp")
-async def update_ytdlp():
+async def update_ytdlp(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
     """
-    Update yt-dlp to the latest version
+    Update yt-dlp to the latest version (ADMIN ONLY)
 
     WARNING: This endpoint is disabled by default for security reasons.
     To enable, set allow_ytdlp_update to true in admin_settings.json.
@@ -2732,14 +3431,14 @@ async def update_ytdlp():
     allow_update = admin_settings.security.allow_ytdlp_update
 
     if not allow_update:
-        await emit_log("WARNING", "Settings", "yt-dlp update blocked - feature disabled for security")
+        await emit_log("WARNING", "System", "yt-dlp update blocked - feature disabled for security")
         raise HTTPException(
             status_code=403,
             detail="yt-dlp updates are disabled for security. Please contact your administrator to enable this feature."
         )
 
     try:
-        await emit_log("INFO", "Settings", "Starting yt-dlp update")
+        await emit_log("INFO", "System", "Starting yt-dlp update")
 
         # Security: Use python3.12 -m pip instead of direct pip command
         # Security: Hardcode the package name to prevent injection
@@ -2751,24 +3450,24 @@ async def update_ytdlp():
         )
 
         if result.returncode == 0:
-            await emit_log("SUCCESS", "Settings", "yt-dlp updated successfully")
+            await emit_log("SUCCESS", "System", "yt-dlp updated successfully")
             return {"message": "yt-dlp updated successfully", "output": result.stdout}
         else:
-            await emit_log("ERROR", "Settings", f"yt-dlp update failed: {result.stderr}")
+            await emit_log("ERROR", "System", f"yt-dlp update failed: {result.stderr}")
             raise HTTPException(status_code=500, detail=result.stderr)
 
     except subprocess.TimeoutExpired:
-        await emit_log("ERROR", "Settings", "yt-dlp update timed out")
+        await emit_log("ERROR", "System", "yt-dlp update timed out")
         raise HTTPException(status_code=500, detail="Update timed out")
     except Exception as e:
-        await emit_log("ERROR", "Settings", f"yt-dlp update error: {str(e)}")
+        await emit_log("ERROR", "System", f"yt-dlp update error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/settings/clear-ytdlp-cache")
-async def clear_ytdlp_cache():
+async def clear_ytdlp_cache(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
     """
-    Clear yt-dlp cache to resolve signature solving and format extraction issues.
+    Clear yt-dlp cache to resolve signature solving and format extraction issues (ADMIN ONLY).
     
     Useful when:
     - YouTube changes their signature algorithm
@@ -2778,7 +3477,7 @@ async def clear_ytdlp_cache():
     This removes cached extractor data and forces yt-dlp to refresh on next use.
     """
     try:
-        await emit_log("INFO", "Settings", "Starting yt-dlp cache cleanup")
+        await emit_log("INFO", "System", "Starting yt-dlp cache cleanup")
         
         cache_dirs = []
         
@@ -2802,26 +3501,26 @@ async def clear_ytdlp_cache():
             try:
                 shutil.rmtree(cache_dir)
                 cleared_count += 1
-                await emit_log("INFO", "Settings", f"Cleared yt-dlp cache: {cache_dir}")
+                await emit_log("INFO", "System", f"Cleared yt-dlp cache: {cache_dir}")
             except Exception as e:
-                await emit_log("WARNING", "Settings", f"Failed to clear cache {cache_dir}: {str(e)}")
+                await emit_log("WARNING", "System", f"Failed to clear cache {cache_dir}: {str(e)}")
         
         if cleared_count == 0:
             message = "No yt-dlp cache directories found"
-            await emit_log("INFO", "Settings", message)
+            await emit_log("INFO", "System", message)
         else:
             message = f"Cleared {cleared_count} yt-dlp cache director(ies)"
-            await emit_log("SUCCESS", "Settings", message)
+            await emit_log("SUCCESS", "System", message)
         
         return {"message": message, "cleared": cleared_count}
     
     except Exception as e:
-        await emit_log("ERROR", "Settings", f"yt-dlp cache cleanup error: {str(e)}")
+        await emit_log("ERROR", "System", f"yt-dlp cache cleanup error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/settings/cookies")
-async def list_cookie_files():
+async def list_cookie_files(current_user: Dict[str, Any] = Depends(get_current_user)):
     """
     List all available cookie files in the cookies/ directory.
     Returns filename, size, and last modified time for each file.
@@ -2853,17 +3552,18 @@ async def list_cookie_files():
         return {"cookies": cookie_files}
 
     except Exception as e:
-        await emit_log("ERROR", "Settings", f"Failed to list cookie files: {str(e)}")
+        await emit_log("ERROR", "System", f"Failed to list cookie files: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/settings/cookies/upload")
 async def upload_cookie_file(
     file: UploadFile = File(...),
-    http_request: Request = None
+    http_request: Request = None,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
     """
-    Upload a cookie file for authenticated downloads.
+    Upload a cookie file for authenticated downloads (ADMIN ONLY).
     Validates file size (max 100KB) and file type (.txt only).
     """
     # Get client IP for logging
@@ -2927,9 +3627,9 @@ async def upload_cookie_file(
 
 
 @app.delete("/api/settings/cookies/{filename}")
-async def delete_cookie_file(filename: str, http_request: Request = None):
+async def delete_cookie_file(filename: str, http_request: Request = None, current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
     """
-    Delete a cookie file from the cookies/ directory.
+    Delete a cookie file from the cookies/ directory (ADMIN ONLY).
     Validates filename to prevent path traversal attacks.
     """
     # Get client IP for logging
@@ -2969,7 +3669,7 @@ async def delete_cookie_file(filename: str, http_request: Request = None):
 
 
 @app.get("/api/files/thumbnail/{download_id}")
-async def get_thumbnail(download_id: str, db: Session = Depends(get_db_session)):
+async def get_thumbnail(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Serve thumbnail images using download ID"""
     # Look up the download record to get internal_thumbnail filename
     download = DatabaseService.get_download_by_id(db, download_id)
@@ -3004,7 +3704,7 @@ async def get_thumbnail(download_id: str, db: Session = Depends(get_db_session))
 
 
 @app.get("/api/files/video/{download_id}")
-async def get_video(download_id: str, db: Session = Depends(get_db_session)):
+async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Serve video files for streaming/playing in browser using download ID"""
     # Look up the download record to get internal_filename
     download = DatabaseService.get_download_by_id(db, download_id)
@@ -3040,7 +3740,7 @@ async def get_video(download_id: str, db: Session = Depends(get_db_session)):
 
 
 @app.get("/api/files/download/{download_id}")
-async def download_file(download_id: str, db: Session = Depends(get_db_session)):
+async def download_file(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Download video file using download ID"""
     # Look up the download record to get internal_filename and display filename
     download = DatabaseService.get_download_by_id(db, download_id)
@@ -3061,7 +3761,7 @@ async def download_file(download_id: str, db: Session = Depends(get_db_session))
 
 
 @app.get("/api/files", response_model=List[FileInfo])
-async def list_files(db: Session = Depends(get_db_session)):
+async def list_files(current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """List all completed downloads with their display filenames and sizes"""
     try:
         # Get all completed downloads from database
@@ -3088,7 +3788,7 @@ async def list_files(db: Session = Depends(get_db_session)):
 
 
 @app.delete("/api/files/{download_id}")
-async def delete_file(download_id: str, db: Session = Depends(get_db_session)):
+async def delete_file(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Delete a specific file from downloads directory and remove database entry using download ID"""
     try:
         # Look up the download record
@@ -3134,7 +3834,7 @@ async def delete_file(download_id: str, db: Session = Depends(get_db_session)):
 
 
 @app.post("/api/files/calculate-zip-size")
-async def calculate_zip_size(request: DownloadZipRequest, db: Session = Depends(get_db_session)):
+async def calculate_zip_size(request: DownloadZipRequest, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Calculate total size of selected files and estimate ZIP size using download IDs"""
     try:
         if not request.download_ids:
@@ -3171,7 +3871,7 @@ async def calculate_zip_size(request: DownloadZipRequest, db: Session = Depends(
 
 
 @app.post("/api/files/download-zip")
-async def download_files_as_zip(request: DownloadZipRequest, db: Session = Depends(get_db_session)):
+async def download_files_as_zip(request: DownloadZipRequest, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """Create and stream a ZIP file containing selected files using download IDs"""
     try:
         if not request.download_ids:
@@ -3249,7 +3949,7 @@ async def download_files_as_zip(request: DownloadZipRequest, db: Session = Depen
 # ========================================
 
 @app.post("/api/tools/video-to-mp3", response_model=ToolConversionResponse)
-async def convert_video_to_mp3(request: VideoToMp3Request, db: Session = Depends(get_db_session)):
+async def convert_video_to_mp3(request: VideoToMp3Request, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """
     Start a video to MP3 conversion.
     Checks for existing conversion to prevent duplicates.
@@ -3336,7 +4036,7 @@ async def convert_video_to_mp3(request: VideoToMp3Request, db: Session = Depends
 
 
 @app.get("/api/tools/conversions", response_model=List[ToolConversionResponse])
-async def list_conversions(status: Optional[str] = None, db: Session = Depends(get_db_session)):
+async def list_conversions(status: Optional[str] = None, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """
     List all tool conversions, optionally filtered by status.
     """
@@ -3361,7 +4061,7 @@ async def list_conversions(status: Optional[str] = None, db: Session = Depends(g
 
 
 @app.get("/api/tools/conversions/{conversion_id}", response_model=ToolConversionResponse)
-async def get_conversion(conversion_id: str, db: Session = Depends(get_db_session)):
+async def get_conversion(conversion_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """
     Get specific conversion status by ID.
     """
@@ -3380,7 +4080,7 @@ async def get_conversion(conversion_id: str, db: Session = Depends(get_db_sessio
 
 
 @app.delete("/api/tools/conversions/{conversion_id}")
-async def delete_conversion(conversion_id: str, db: Session = Depends(get_db_session)):
+async def delete_conversion(conversion_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """
     Delete a conversion and its output file.
     """
@@ -3421,7 +4121,7 @@ async def delete_conversion(conversion_id: str, db: Session = Depends(get_db_ses
 
 
 @app.post("/api/tools/conversions/{conversion_id}/cancel")
-async def cancel_conversion(conversion_id: str, db: Session = Depends(get_db_session)):
+async def cancel_conversion(conversion_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """
     Cancel an active conversion job.
     Kills the FFmpeg process, cleans up partial files, and marks as failed.
@@ -3496,7 +4196,7 @@ async def cancel_conversion(conversion_id: str, db: Session = Depends(get_db_ses
 
 
 @app.get("/api/tools/audio/{conversion_id}")
-async def download_audio(conversion_id: str, db: Session = Depends(get_db_session)):
+async def download_audio(conversion_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """
     Stream/download the MP3 audio file for a completed conversion.
     """
@@ -3534,7 +4234,7 @@ async def download_audio(conversion_id: str, db: Session = Depends(get_db_sessio
 
 
 @app.post("/api/tools/conversions/cleanup", response_model=ConversionCleanupStats)
-async def cleanup_stale_conversions(hours: int = 1, db: Session = Depends(get_db_session)):
+async def cleanup_stale_conversions(hours: int = 1, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
     """
     Clean up stale conversions that have been stuck in queued or converting state
     for longer than the specified number of hours.
@@ -3603,7 +4303,7 @@ async def cleanup_stale_conversions(hours: int = 1, db: Session = Depends(get_db
 
 
 @app.post("/api/tools/transform")
-async def transform_video(request: VideoTransformRequest):
+async def transform_video(request: VideoTransformRequest, current_user: Dict[str, Any] = Depends(get_current_user)):
     """
     Queue a video transformation (flip or rotate).
     Creates a ToolConversion record and adds to processing queue.
@@ -3874,11 +4574,12 @@ async def collect_hardware_info():
 
 
 @app.get("/api/hardware/info")
-async def get_hardware_info():
+async def get_hardware_info(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
     """
     Get server hardware information (returns cached data).
     Cache is populated at startup and refreshed via POST /api/hardware/refresh.
     Clients should cache this in localStorage and only fetch once per session.
+    (ADMIN ONLY)
     """
     global hardware_info_cache
 
@@ -3890,9 +4591,9 @@ async def get_hardware_info():
 
 
 @app.post("/api/hardware/refresh")
-async def refresh_hardware_info():
+async def refresh_hardware_info(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
     """
-    Refresh hardware information cache.
+    Refresh hardware information cache (ADMIN ONLY).
     Called when user clicks the "Refresh Hardware Info" button.
     Re-detects all hardware and updates the server cache.
     """

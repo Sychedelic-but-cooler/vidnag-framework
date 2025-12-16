@@ -13,3 +13,7 @@ python-multipart==0.0.20
 yt-dlp
 yt-dlp-ejs
 sqlalchemy==2.0.36
+
+# Authentication
+bcrypt==4.1.2
+PyJWT==2.8.0
