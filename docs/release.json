@@ -1,10 +1,38 @@
 {
-  "current_version": "2.5.4-12",
+  "current_version": "2.6.20-12",
   "releases": [
+    {
+      "version": "2.6.20-12",
+      "date": "2024-12-17",
+      "title": "SSO UI Refinements",
+      "highlights": [
+        "Fixed Login page SSO logic",
+        "Fixed Display issues on Mobile"
+      ]
+    },
+    {
+      "version": "2.6.13-12",
+      "date": "2024-12-17",
+      "title": "OIDC Configuration & Admin Improvements",
+      "highlights": [
+        "Fixed OIDC Settings Load Logic",
+        "Added better Admin Setup for OIDC users",
+        "Fixed some SSO Redirect Issues"
+      ]
+    },
+    {
+      "version": "2.6.4-12",
+      "date": "2024-12-17",
+      "title": "OAuth/OIDC Integration",
+      "highlights": [
+        "Added OAuth Support",
+        "Updated User Management"
+      ]
+    },
     {
       "version": "2.5.4-12",
       "date": "2024-12-17",
-      "title": "title": "Download & Queue Visibility System",
+      "title": "Download & Queue Visibility System",
       "highlights": [
         "Added Download System Public or Private Types",
         "Removed Global Hover Effects from Top Level Themes"
