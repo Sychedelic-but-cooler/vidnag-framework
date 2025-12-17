@@ -643,31 +643,133 @@
                 <!-- App Config Subsection -->
                 <div id="app-config-subsection" class="subsection-content active">
                     <h3>Application Configuration</h3>
-                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Edit admin_settings.json configuration. Changes require application restart.</p>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure application behavior and security settings.</p>
 
-                    <div class="warning-box">
-                        <strong>⚠️ Warning:</strong> Incorrect configuration may prevent the application from starting. Make backups before editing.
+                    <div class="warning-box" style="margin-bottom: 2rem;">
+                        <strong>⚠️ Important:</strong> Changes to these settings require an application restart to take effect.
                     </div>
 
-                    <div id="app-config-editor" style="margin-top: 1.5rem;">
-                        <!-- Configuration editor will be added in future phase -->
-                        <p style="color: var(--text-muted); font-style: italic;">Configuration editor coming soon.</p>
-                    </div>
+                    <form id="app-config-form">
+                        <!-- Security Settings -->
+                        <div class="settings-section">
+                            <h4>Security Settings</h4>
+
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Allow yt-dlp Updates</strong>
+                                    <p>Enable yt-dlp updates via the Tools tab. Disable for security in production environments.</p>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="allow-ytdlp-update">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Debug Proxy Headers</strong>
+                                    <p>Log proxy headers for debugging. Disable in production to avoid logging sensitive information.</p>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="debug-proxy-headers">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 2rem;">
+                            <button type="submit" class="btn btn-primary">Save App Configuration</button>
+                        </div>
+                    </form>
                 </div>
 
                 <!-- Authentication Subsection -->
                 <div id="authentication-subsection" class="subsection-content">
                     <h3>Authentication System</h3>
-                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Enable or disable the authentication system. When disabled, all users have admin access.</p>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure authentication and security settings.</p>
 
-                    <div class="warning-box">
-                        <strong>⚠️ Warning:</strong> Disabling authentication removes all security. Only disable in trusted environments.
+                    <div class="warning-box" style="margin-bottom: 2rem;">
+                        <strong>⚠️ Important:</strong> Changes to these settings require an application restart to take effect.
                     </div>
 
-                    <div id="auth-toggle-controls" style="margin-top: 1.5rem;">
-                        <!-- Auth toggle controls will be added in future phase -->
-                        <p style="color: var(--text-muted); font-style: italic;">Authentication controls coming soon. Edit admin_settings.json manually to change auth settings.</p>
-                    </div>
+                    <form id="authentication-form">
+                        <!-- Authentication Toggle -->
+                        <div class="settings-section">
+                            <h4>Authentication</h4>
+
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Enable Authentication</strong>
+                                    <p>When disabled, all users have admin access. Only disable in trusted environments.</p>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="auth-enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- JWT Settings -->
+                        <div class="settings-section">
+                            <h4>JWT Configuration</h4>
+
+                            <div class="form-group">
+                                <label for="jwt-session-expiry">Session Expiry (hours)</label>
+                                <input type="number" id="jwt-session-expiry" class="form-control" min="1" max="168" step="1" required>
+                                <small style="color: var(--text-muted);">How long users stay logged in. Range: 1-168 hours (7 days).</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="jwt-key-rotation">Key Rotation (days)</label>
+                                <input type="number" id="jwt-key-rotation" class="form-control" min="1" max="365" step="1" required>
+                                <small style="color: var(--text-muted);">How often JWT signing keys are rotated. Range: 1-365 days.</small>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- Account Lockout Settings -->
+                        <div class="settings-section">
+                            <h4>Account Lockout</h4>
+
+                            <div class="form-group">
+                                <label for="failed-login-max">Maximum Failed Login Attempts</label>
+                                <input type="number" id="failed-login-max" class="form-control" min="3" max="20" step="1" required>
+                                <small style="color: var(--text-muted);">Account locks after this many failed attempts. Range: 3-20 attempts.</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="failed-login-lockout">Lockout Duration (minutes)</label>
+                                <input type="number" id="failed-login-lockout" class="form-control" min="5" max="1440" step="5" required>
+                                <small style="color: var(--text-muted);">How long accounts remain locked. Range: 5-1440 minutes (24 hours).</small>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- Suspicious IP Settings -->
+                        <div class="settings-section">
+                            <h4>Suspicious Activity Detection</h4>
+
+                            <div class="form-group">
+                                <label for="suspicious-ip-threshold">Suspicious IP Threshold</label>
+                                <input type="number" id="suspicious-ip-threshold" class="form-control" min="2" max="10" step="1" required>
+                                <small style="color: var(--text-muted);">Flag IP as suspicious after this many failed attempts. Range: 2-10 attempts.</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="suspicious-ip-window">Detection Window (hours)</label>
+                                <input type="number" id="suspicious-ip-window" class="form-control" min="1" max="168" step="1" required>
+                                <small style="color: var(--text-muted);">Time window for counting suspicious attempts. Range: 1-168 hours (7 days).</small>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 2rem;">
+                            <button type="submit" class="btn btn-primary">Save Authentication Settings</button>
+                        </div>
+                    </form>
                 </div>
 
                 <!-- Security Config Subsection -->
@@ -682,15 +784,18 @@
                     <form id="security-config-form">
                         <!-- Proxy Settings -->
                         <div class="settings-section">
-                            <h4>🔗 Proxy Configuration</h4>
+                            <h4>Proxy Configuration</h4>
                             <p style="color: var(--text-muted); margin-bottom: 1rem;">Configure reverse proxy settings if deployed behind Nginx, Caddy, or similar.</p>
 
-                            <div class="form-group">
-                                <label class="checkbox-label">
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Application is behind a reverse proxy</strong>
+                                    <p>Enable this if using Nginx, Caddy, Traefik, or similar</p>
+                                </div>
+                                <label class="toggle-switch">
                                     <input type="checkbox" id="is-behind-proxy">
-                                    <span>Application is behind a reverse proxy</span>
+                                    <span class="toggle-slider"></span>
                                 </label>
-                                <small style="color: var(--text-muted);">Enable this if using Nginx, Caddy, Traefik, or similar</small>
                             </div>
 
                             <div id="proxy-settings-group" style="display: none;">
@@ -723,24 +828,70 @@
 
                         <!-- CORS Settings -->
                         <div class="settings-section">
-                            <h4>🌐 CORS Configuration</h4>
+                            <h4>CORS Configuration</h4>
                             <p style="color: var(--text-muted); margin-bottom: 1rem;">Configure which domains can access your API.</p>
 
-                            <div class="form-group">
-                                <label for="allowed-origins-list">Allowed Origins</label>
-                                <div id="allowed-origins-list" class="list-container">
-                                    <!-- Dynamically populated -->
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Enable CORS</strong>
+                                    <p>Allow cross-origin requests from specified domains</p>
                                 </div>
-                                <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-                                    <input type="text" id="new-origin" class="form-control" placeholder="https://example.com" style="flex: 1;">
-                                    <button type="button" id="add-origin-btn" class="btn btn-secondary">Add</button>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="cors-enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div id="cors-settings-group" style="display: none; margin-top: 1rem;">
+                                <div class="form-group">
+                                    <label for="allowed-origins-list">Allowed Origins</label>
+                                    <div id="allowed-origins-list" class="list-container">
+                                        <!-- Dynamically populated -->
+                                    </div>
+                                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                                        <input type="text" id="new-origin" class="form-control" placeholder="https://example.com" style="flex: 1;">
+                                        <button type="button" id="add-origin-btn" class="btn btn-secondary">Add</button>
+                                    </div>
+                                    <small style="color: var(--text-muted);">Domains that can make API requests to this server</small>
                                 </div>
-                                <small style="color: var(--text-muted);">Domains that can make API requests to this server</small>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- Rate Limiting Settings -->
+                        <div class="settings-section">
+                            <h4>Rate Limiting</h4>
+                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Protect against abuse by limiting requests per IP address.</p>
+
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Enable Rate Limiting</strong>
+                                    <p>Limit the number of requests each IP can make per time window</p>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="rate-limiting-enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div id="rate-limiting-settings-group" style="display: none; margin-top: 1rem;">
+                                <div class="form-group">
+                                    <label for="rate-limit-max-requests">Maximum Requests per Window</label>
+                                    <input type="number" id="rate-limit-max-requests" class="form-control" min="10" max="1000" step="10" required>
+                                    <small style="color: var(--text-muted);">Number of requests allowed per time window. Range: 10-1000.</small>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="rate-limit-window">Time Window (seconds)</label>
+                                    <input type="number" id="rate-limit-window" class="form-control" min="10" max="300" step="10" required>
+                                    <small style="color: var(--text-muted);">Time window in seconds. Range: 10-300 (5 minutes).</small>
+                                </div>
                             </div>
                         </div>
 
                         <div style="margin-top: 2rem;">
-                            <button type="submit" class="btn btn-primary">💾 Save Security Settings</button>
+                            <button type="submit" class="btn btn-primary">Save Security Settings</button>
                         </div>
                     </form>
                 </div>

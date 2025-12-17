@@ -272,9 +272,13 @@ app_file_logger.propagate = False  # Don't send logs to parent logger
 # Necessary when the frontend is served from a different origin than the API
 # Configuration is loaded from admin_settings.json
 admin_settings_instance = get_admin_settings()
+
+# If CORS is disabled, use empty allowed_origins to block all cross-origin requests
+cors_allowed_origins = admin_settings_instance.cors.allowed_origins if admin_settings_instance.cors.enabled else []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=admin_settings_instance.cors.allowed_origins,
+    allow_origins=cors_allowed_origins,
     allow_credentials=admin_settings_instance.cors.allow_credentials,
     allow_methods=admin_settings_instance.cors.allowed_methods,
     allow_headers=admin_settings_instance.cors.allowed_headers,
@@ -365,6 +369,42 @@ async def trust_proxy_headers(request: Request, call_next):
         logger.info(f"  Configured Header ({admin_settings.proxy.proxy_header}): {request.headers.get(admin_settings.proxy.proxy_header)}")
         logger.info(f"  Resolved Client IP: {client_ip}")
         trust_proxy_headers.logged_count += 1
+
+    response = await call_next(request)
+    return response
+
+
+# Rate Limiting Middleware
+# Configuration loaded from admin_settings.json
+# Applies rate limiting globally to all endpoints
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    Apply rate limiting to all requests based on client IP.
+
+    Configuration from admin_settings.json:
+    - enabled: Master toggle for rate limiting
+    - max_requests_per_window: Number of allowed requests
+    - window_seconds: Time window for rate limiting
+
+    Returns 429 Too Many Requests if limit exceeded.
+    """
+    admin_settings = get_admin_settings()
+
+    # Skip rate limiting if disabled
+    if not admin_settings.rate_limit.enabled:
+        return await call_next(request)
+
+    # Get client IP (set by proxy headers middleware)
+    client_ip = getattr(request.state, 'client_ip', 'unknown')
+
+    # Check rate limit
+    if not check_rate_limit(client_ip):
+        await emit_log("WARNING", "Security", f"Rate limit exceeded for IP: {client_ip} on {request.url.path}")
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please try again later."}
+        )
 
     response = await call_next(request)
     return response
@@ -3492,6 +3532,22 @@ async def get_active_sessions(
     }
 
 
+@app.get("/api/admin/test-cors")
+async def test_cors_endpoint():
+    """
+    Test endpoint to verify CORS configuration.
+    Returns current CORS settings and server info.
+    Public endpoint for testing purposes.
+    """
+    admin_settings = get_admin_settings()
+    return {
+        "message": "CORS test successful",
+        "cors_enabled": admin_settings.cors.enabled,
+        "allowed_origins": admin_settings.cors.allowed_origins,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
 @app.get("/api/admin/settings")
 async def get_admin_settings_ui(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
@@ -3511,6 +3567,7 @@ async def get_admin_settings_ui(
             "trusted_proxies": admin_settings.proxy.trusted_proxies
         },
         "cors": {
+            "enabled": admin_settings.cors.enabled,
             "allowed_origins": admin_settings.cors.allowed_origins
         },
         "auth": {
@@ -3599,6 +3656,10 @@ async def update_admin_settings_ui(
         with open(settings_file, 'w') as f:
             json.dump(current_settings, f, indent=2)
 
+        # Reload the singleton to pick up the new settings from disk
+        from admin_settings import reload_admin_settings
+        reload_admin_settings()
+
         # Log the change
         await emit_log("INFO", "Admin", f"Admin {current_admin.get('username')} updated application settings")
 
@@ -3672,10 +3733,7 @@ async def start_download(request: DownloadRequest, http_request: Request, curren
     # Get client IP (from proxy headers middleware)
     client_ip = getattr(http_request.state, 'client_ip', 'unknown')
 
-    # Rate limiting: configured in admin_settings.json
-    if not check_rate_limit(client_ip):
-        await emit_log("WARNING", "API", f"Rate limit exceeded for IP: {client_ip}")
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
+    # Note: Rate limiting is now handled by global middleware
 
     # Validate URL
     is_valid, error_msg = validate_url(request.url)
@@ -4230,7 +4288,7 @@ async def update_ytdlp(current_admin: Dict[str, Any] = Depends(get_current_admin
         await emit_log("WARNING", "System", "yt-dlp update blocked - feature disabled for security")
         raise HTTPException(
             status_code=403,
-            detail="yt-dlp updates are disabled for security. Please contact your administrator to enable this feature."
+            detail="yt-dlp updates are disabled. Enable 'Allow yt-dlp Updates' in Admin Settings > App Config to use this feature."
         )
 
     try:

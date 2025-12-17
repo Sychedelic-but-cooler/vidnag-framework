@@ -2598,8 +2598,8 @@ function startLogsPolling() {
     // Poll immediately
     pollLogs();
 
-    // Then poll every 5 seconds
-    logsPollingInterval = setInterval(pollLogs, 5000);
+    // Then poll every 10 seconds
+    logsPollingInterval = setInterval(pollLogs, 10000);
 }
 
 function stopLogsPolling() {
@@ -4227,7 +4227,7 @@ function closeDeleteUserModal() {
  * Load admin settings tab
  * Initializes user management and subsection tabs
  */
-function loadAdminSettingsTab() {
+async function loadAdminSettingsTab() {
     console.log('Loading admin settings tab...');
 
     // Load user management by default
@@ -4235,6 +4235,22 @@ function loadAdminSettingsTab() {
 
     // Initialize subsection tabs
     initSubsectionTabs();
+
+    // Load admin settings and populate the active form
+    await loadAdminSettings();
+
+    // Find the active subsection and load its data
+    const activeTab = document.querySelector('.subsection-tab.active');
+    if (activeTab) {
+        const subsectionName = activeTab.dataset.subsection;
+        if (subsectionName === 'app-config') {
+            loadAppConfigForm();
+        } else if (subsectionName === 'authentication') {
+            loadAuthenticationForm();
+        } else if (subsectionName === 'security-config') {
+            loadSecurityConfigForm();
+        }
+    }
 }
 
 /**
@@ -4278,7 +4294,7 @@ function initSubsectionTabs() {
 /**
  * Load data for specific subsection
  */
-function loadSubsectionData(subsectionName) {
+async function loadSubsectionData(subsectionName) {
     switch(subsectionName) {
         case 'database':
             loadDatabaseStats();
@@ -4288,15 +4304,16 @@ function loadSubsectionData(subsectionName) {
             console.log('Cleanup subsection selected');
             break;
         case 'app-config':
-            // App config editor coming soon
-            console.log('App config subsection selected');
+            await loadAdminSettings();
+            loadAppConfigForm();
             break;
         case 'authentication':
-            // Authentication controls coming soon
-            console.log('Authentication subsection selected');
+            await loadAdminSettings();
+            loadAuthenticationForm();
             break;
         case 'security-config':
-            loadAdminSettings();
+            await loadAdminSettings();
+            loadSecurityConfigForm();
             break;
         case 'audit-log':
             loadAuditLogs();
@@ -4985,8 +5002,107 @@ function loadSecurityConfigForm() {
     // Render trusted proxies list
     renderTrustedProxiesList(currentAdminSettings.proxy.trusted_proxies);
 
+    // Load CORS settings
+    const corsEnabled = document.getElementById('cors-enabled');
+    if (corsEnabled) {
+        corsEnabled.checked = currentAdminSettings.cors.enabled;
+        toggleCorsSettings();
+    }
+
     // Render allowed origins list
     renderAllowedOriginsList(currentAdminSettings.cors.allowed_origins);
+
+    // Load rate limiting settings
+    const rateLimitingEnabled = document.getElementById('rate-limiting-enabled');
+    if (rateLimitingEnabled) {
+        rateLimitingEnabled.checked = currentAdminSettings.rate_limiting.enabled;
+        toggleRateLimitingSettings();
+    }
+
+    const rateLimitMaxRequests = document.getElementById('rate-limit-max-requests');
+    if (rateLimitMaxRequests) {
+        rateLimitMaxRequests.value = currentAdminSettings.rate_limiting.max_requests_per_window;
+    }
+
+    const rateLimitWindow = document.getElementById('rate-limit-window');
+    if (rateLimitWindow) {
+        rateLimitWindow.value = currentAdminSettings.rate_limiting.window_seconds;
+    }
+}
+
+/**
+ * Load App Config form with current settings
+ */
+function loadAppConfigForm() {
+    if (!currentAdminSettings) {
+        console.warn('loadAppConfigForm: currentAdminSettings is not loaded');
+        return;
+    }
+
+    console.log('Loading App Config form with settings:', currentAdminSettings.security);
+
+    // Load security settings
+    const allowYtdlpUpdate = document.getElementById('allow-ytdlp-update');
+    if (allowYtdlpUpdate) {
+        allowYtdlpUpdate.checked = currentAdminSettings.security.allow_ytdlp_update;
+        console.log('Set allow_ytdlp_update checkbox to:', currentAdminSettings.security.allow_ytdlp_update);
+    } else {
+        console.warn('allow-ytdlp-update element not found');
+    }
+
+    const debugProxyHeaders = document.getElementById('debug-proxy-headers');
+    if (debugProxyHeaders) {
+        debugProxyHeaders.checked = currentAdminSettings.security.debug_proxy_headers;
+        console.log('Set debug_proxy_headers checkbox to:', currentAdminSettings.security.debug_proxy_headers);
+    } else {
+        console.warn('debug-proxy-headers element not found');
+    }
+}
+
+/**
+ * Load Authentication form with current settings
+ */
+function loadAuthenticationForm() {
+    if (!currentAdminSettings) return;
+
+    // Load auth enabled
+    const authEnabled = document.getElementById('auth-enabled');
+    if (authEnabled) {
+        authEnabled.checked = currentAdminSettings.auth.enabled;
+    }
+
+    // Load JWT settings
+    const jwtSessionExpiry = document.getElementById('jwt-session-expiry');
+    if (jwtSessionExpiry) {
+        jwtSessionExpiry.value = currentAdminSettings.auth.jwt_session_expiry_hours;
+    }
+
+    const jwtKeyRotation = document.getElementById('jwt-key-rotation');
+    if (jwtKeyRotation) {
+        jwtKeyRotation.value = currentAdminSettings.auth.jwt_key_rotation_days;
+    }
+
+    // Load account lockout settings
+    const failedLoginMax = document.getElementById('failed-login-max');
+    if (failedLoginMax) {
+        failedLoginMax.value = currentAdminSettings.auth.failed_login_attempts_max;
+    }
+
+    const failedLoginLockout = document.getElementById('failed-login-lockout');
+    if (failedLoginLockout) {
+        failedLoginLockout.value = currentAdminSettings.auth.failed_login_lockout_minutes;
+    }
+
+    // Load suspicious IP settings
+    const suspiciousIpThreshold = document.getElementById('suspicious-ip-threshold');
+    if (suspiciousIpThreshold) {
+        suspiciousIpThreshold.value = currentAdminSettings.auth.suspicious_ip_threshold;
+    }
+
+    const suspiciousIpWindow = document.getElementById('suspicious-ip-window');
+    if (suspiciousIpWindow) {
+        suspiciousIpWindow.value = currentAdminSettings.auth.suspicious_ip_window_hours;
+    }
 }
 
 /**
@@ -5151,6 +5267,30 @@ function toggleProxySettings() {
 }
 
 /**
+ * Toggle CORS settings visibility
+ */
+function toggleCorsSettings() {
+    const checkbox = document.getElementById('cors-enabled');
+    const corsGroup = document.getElementById('cors-settings-group');
+
+    if (checkbox && corsGroup) {
+        corsGroup.style.display = checkbox.checked ? 'block' : 'none';
+    }
+}
+
+/**
+ * Toggle rate limiting settings visibility
+ */
+function toggleRateLimitingSettings() {
+    const checkbox = document.getElementById('rate-limiting-enabled');
+    const rateLimitGroup = document.getElementById('rate-limiting-settings-group');
+
+    if (checkbox && rateLimitGroup) {
+        rateLimitGroup.style.display = checkbox.checked ? 'block' : 'none';
+    }
+}
+
+/**
  * Save security settings
  */
 async function saveSecuritySettings(e) {
@@ -5164,9 +5304,17 @@ async function saveSecuritySettings(e) {
     // Update settings from form
     const isBehindProxy = document.getElementById('is-behind-proxy');
     const proxyHeader = document.getElementById('proxy-header');
+    const corsEnabled = document.getElementById('cors-enabled');
+    const rateLimitingEnabled = document.getElementById('rate-limiting-enabled');
+    const rateLimitMaxRequests = document.getElementById('rate-limit-max-requests');
+    const rateLimitWindow = document.getElementById('rate-limit-window');
 
     currentAdminSettings.proxy.is_behind_proxy = isBehindProxy.checked;
     currentAdminSettings.proxy.proxy_header = proxyHeader.value;
+    currentAdminSettings.cors.enabled = corsEnabled.checked;
+    currentAdminSettings.rate_limiting.enabled = rateLimitingEnabled.checked;
+    currentAdminSettings.rate_limiting.max_requests_per_window = parseInt(rateLimitMaxRequests.value);
+    currentAdminSettings.rate_limiting.window_seconds = parseInt(rateLimitWindow.value);
 
     // Validate
     if (currentAdminSettings.proxy.is_behind_proxy) {
@@ -5176,9 +5324,22 @@ async function saveSecuritySettings(e) {
         }
     }
 
-    if (currentAdminSettings.cors.allowed_origins.length === 0) {
-        showToast('Please add at least one allowed origin', 'error');
-        return;
+    if (currentAdminSettings.cors.enabled) {
+        if (currentAdminSettings.cors.allowed_origins.length === 0) {
+            showToast('Please add at least one allowed origin', 'error');
+            return;
+        }
+    }
+
+    if (currentAdminSettings.rate_limiting.enabled) {
+        if (currentAdminSettings.rate_limiting.max_requests_per_window < 10 || currentAdminSettings.rate_limiting.max_requests_per_window > 1000) {
+            showToast('Maximum requests must be between 10 and 1000', 'error');
+            return;
+        }
+        if (currentAdminSettings.rate_limiting.window_seconds < 10 || currentAdminSettings.rate_limiting.window_seconds > 300) {
+            showToast('Time window must be between 10 and 300 seconds', 'error');
+            return;
+        }
     }
 
     try {
@@ -5187,7 +5348,8 @@ async function saveSecuritySettings(e) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 proxy: currentAdminSettings.proxy,
-                cors: currentAdminSettings.cors
+                cors: currentAdminSettings.cors,
+                rate_limiting: currentAdminSettings.rate_limiting
             })
         });
 
@@ -5201,8 +5363,129 @@ async function saveSecuritySettings(e) {
 
         // Reload settings to confirm
         await loadAdminSettings();
+
+        // Refresh the form to show the updated values
+        loadSecurityConfigForm();
     } catch (error) {
         console.error('Error saving security settings:', error);
+        showToast(`Failed to save settings: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Save app config settings
+ */
+async function saveAppConfigSettings(e) {
+    e.preventDefault();
+
+    if (!currentAdminSettings) {
+        showToast('Settings not loaded', 'error');
+        return;
+    }
+
+    // Update settings from form
+    const allowYtdlpUpdate = document.getElementById('allow-ytdlp-update');
+    const debugProxyHeaders = document.getElementById('debug-proxy-headers');
+
+    currentAdminSettings.security.allow_ytdlp_update = allowYtdlpUpdate.checked;
+    currentAdminSettings.security.debug_proxy_headers = debugProxyHeaders.checked;
+
+    try {
+        const response = await apiFetch('/api/admin/settings/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                security: currentAdminSettings.security
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to save settings');
+        }
+
+        const result = await response.json();
+        showToast('App configuration saved successfully! Restart the application to apply changes.', 'success');
+
+        // Reload settings to confirm
+        await loadAdminSettings();
+
+        // Refresh the form to show the updated values
+        loadAppConfigForm();
+    } catch (error) {
+        console.error('Error saving app config settings:', error);
+        showToast(`Failed to save settings: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Save authentication settings
+ */
+async function saveAuthenticationSettings(e) {
+    e.preventDefault();
+
+    if (!currentAdminSettings) {
+        showToast('Settings not loaded', 'error');
+        return;
+    }
+
+    // Update settings from form
+    const authEnabled = document.getElementById('auth-enabled');
+    const jwtSessionExpiry = document.getElementById('jwt-session-expiry');
+    const jwtKeyRotation = document.getElementById('jwt-key-rotation');
+    const failedLoginMax = document.getElementById('failed-login-max');
+    const failedLoginLockout = document.getElementById('failed-login-lockout');
+    const suspiciousIpThreshold = document.getElementById('suspicious-ip-threshold');
+    const suspiciousIpWindow = document.getElementById('suspicious-ip-window');
+
+    currentAdminSettings.auth.enabled = authEnabled.checked;
+    currentAdminSettings.auth.jwt_session_expiry_hours = parseInt(jwtSessionExpiry.value);
+    currentAdminSettings.auth.jwt_key_rotation_days = parseInt(jwtKeyRotation.value);
+    currentAdminSettings.auth.failed_login_attempts_max = parseInt(failedLoginMax.value);
+    currentAdminSettings.auth.failed_login_lockout_minutes = parseInt(failedLoginLockout.value);
+    currentAdminSettings.auth.suspicious_ip_threshold = parseInt(suspiciousIpThreshold.value);
+    currentAdminSettings.auth.suspicious_ip_window_hours = parseInt(suspiciousIpWindow.value);
+
+    // Validate ranges
+    if (currentAdminSettings.auth.jwt_session_expiry_hours < 1 || currentAdminSettings.auth.jwt_session_expiry_hours > 168) {
+        showToast('Session expiry must be between 1 and 168 hours', 'error');
+        return;
+    }
+
+    if (currentAdminSettings.auth.failed_login_attempts_max < 3 || currentAdminSettings.auth.failed_login_attempts_max > 20) {
+        showToast('Failed login attempts must be between 3 and 20', 'error');
+        return;
+    }
+
+    if (currentAdminSettings.auth.suspicious_ip_threshold < 2 || currentAdminSettings.auth.suspicious_ip_threshold > 10) {
+        showToast('Suspicious IP threshold must be between 2 and 10', 'error');
+        return;
+    }
+
+    try {
+        const response = await apiFetch('/api/admin/settings/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                auth: currentAdminSettings.auth
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to save settings');
+        }
+
+        const result = await response.json();
+        showToast('Authentication settings saved successfully! Restart the application to apply changes.', 'success');
+
+        // Reload settings to confirm
+        await loadAdminSettings();
+
+        // Refresh the form to show the updated values
+        loadAuthenticationForm();
+    } catch (error) {
+        console.error('Error saving authentication settings:', error);
         showToast(`Failed to save settings: ${error.message}`, 'error');
     }
 }
@@ -5213,7 +5496,7 @@ async function saveSecuritySettings(e) {
  */
 setInterval(async () => {
     await loadConversions();
-}, 2000);
+}, 5000);
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', async () => {
@@ -5389,6 +5672,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // Admin Settings - App Config
+    const appConfigForm = document.getElementById('app-config-form');
+    if (appConfigForm) {
+        appConfigForm.addEventListener('submit', saveAppConfigSettings);
+    }
+
+    // Admin Settings - Authentication
+    const authenticationForm = document.getElementById('authentication-form');
+    if (authenticationForm) {
+        authenticationForm.addEventListener('submit', saveAuthenticationSettings);
+    }
+
     // Admin Settings - Security Config
     const securityConfigForm = document.getElementById('security-config-form');
     if (securityConfigForm) {
@@ -5398,6 +5693,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     const isBehindProxyCheckbox = document.getElementById('is-behind-proxy');
     if (isBehindProxyCheckbox) {
         isBehindProxyCheckbox.addEventListener('change', toggleProxySettings);
+    }
+
+    const corsEnabledCheckbox = document.getElementById('cors-enabled');
+    if (corsEnabledCheckbox) {
+        corsEnabledCheckbox.addEventListener('change', toggleCorsSettings);
+    }
+
+    const rateLimitingEnabledCheckbox = document.getElementById('rate-limiting-enabled');
+    if (rateLimitingEnabledCheckbox) {
+        rateLimitingEnabledCheckbox.addEventListener('change', toggleRateLimitingSettings);
     }
 
     const addProxyIpBtn = document.getElementById('add-proxy-ip-btn');
@@ -5511,8 +5816,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('='.repeat(60));
     startLogsPolling();
 
-    // Auto-refresh downloads every 5 seconds
-    setInterval(loadDownloads, 5000);
+    // Auto-refresh downloads every 10 seconds
+    setInterval(loadDownloads, 10000);
 });
 
 // Cleanup on page unload

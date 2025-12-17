@@ -34,6 +34,7 @@ ADMIN_SETTINGS_FILE = "admin_settings.json"
 # Safe defaults - very restrictive, requiring explicit configuration for production
 DEFAULT_ADMIN_SETTINGS = {
     "cors": {
+        "enabled": True,  # Enable CORS by default
         "allowed_origins": [
             "http://localhost",
             "http://localhost:8000",
@@ -78,6 +79,11 @@ DEFAULT_ADMIN_SETTINGS = {
             "/api/auth/setup",
             "/api/auth/check-setup",
             "/api/auth/status",
+            "/api/admin/test-cors",
+            "/api/files/download/*",
+            "/api/files/thumbnail/*",
+            "/api/files/video/*",
+            "/api/tools/audio/*",
             "/assets/*"
         ],
     },
@@ -87,6 +93,7 @@ DEFAULT_ADMIN_SETTINGS = {
 @dataclass
 class CORSConfig:
     """CORS configuration"""
+    enabled: bool
     allowed_origins: List[str]
     allow_credentials: bool
     allowed_methods: List[str]
