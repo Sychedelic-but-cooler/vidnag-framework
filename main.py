@@ -56,7 +56,7 @@ from security import (
 from auth import PasswordService, JWTService, AuthService, AuditLogService
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.4.0-12"
+APP_VERSION = "2.4.2-12"
 
 def cleanup_old_logs():
     """
@@ -284,9 +284,49 @@ app.add_middleware(
     allow_headers=admin_settings_instance.cors.allowed_headers,
 )
 
+# Rate Limiting Middleware
+# Configuration loaded from admin_settings.json
+# Applies rate limiting globally to all endpoints
+# IMPORTANT: This middleware must be declared BEFORE trust_proxy_headers
+# so that it executes AFTER the client IP has been extracted from proxy headers
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    Apply rate limiting to all requests based on client IP.
+
+    Configuration from admin_settings.json:
+    - enabled: Master toggle for rate limiting
+    - max_requests_per_window: Number of allowed requests
+    - window_seconds: Time window for rate limiting
+
+    Returns 429 Too Many Requests if limit exceeded.
+    """
+    admin_settings = get_admin_settings()
+
+    # Skip rate limiting if disabled
+    if not admin_settings.rate_limit.enabled:
+        return await call_next(request)
+
+    # Get client IP (set by proxy headers middleware)
+    client_ip = getattr(request.state, 'client_ip', 'unknown')
+
+    # Check rate limit
+    if not check_rate_limit(client_ip):
+        await emit_log("WARNING", "Security", f"Rate limit exceeded for IP: {client_ip} on {request.url.path}")
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please try again later."}
+        )
+
+    response = await call_next(request)
+    return response
+
+
 # Proxy Headers Middleware
 # Configuration loaded from admin_settings.json
 # Supports flexible proxy architectures (Nginx, Caddy, etc.)
+# IMPORTANT: This middleware must be declared AFTER rate_limit_middleware
+# so that it executes FIRST and sets client_ip before rate limiting checks it
 @app.middleware("http")
 async def trust_proxy_headers(request: Request, call_next):
     """
@@ -369,42 +409,6 @@ async def trust_proxy_headers(request: Request, call_next):
         logger.info(f"  Configured Header ({admin_settings.proxy.proxy_header}): {request.headers.get(admin_settings.proxy.proxy_header)}")
         logger.info(f"  Resolved Client IP: {client_ip}")
         trust_proxy_headers.logged_count += 1
-
-    response = await call_next(request)
-    return response
-
-
-# Rate Limiting Middleware
-# Configuration loaded from admin_settings.json
-# Applies rate limiting globally to all endpoints
-@app.middleware("http")
-async def rate_limit_middleware(request: Request, call_next):
-    """
-    Apply rate limiting to all requests based on client IP.
-
-    Configuration from admin_settings.json:
-    - enabled: Master toggle for rate limiting
-    - max_requests_per_window: Number of allowed requests
-    - window_seconds: Time window for rate limiting
-
-    Returns 429 Too Many Requests if limit exceeded.
-    """
-    admin_settings = get_admin_settings()
-
-    # Skip rate limiting if disabled
-    if not admin_settings.rate_limit.enabled:
-        return await call_next(request)
-
-    # Get client IP (set by proxy headers middleware)
-    client_ip = getattr(request.state, 'client_ip', 'unknown')
-
-    # Check rate limit
-    if not check_rate_limit(client_ip):
-        await emit_log("WARNING", "Security", f"Rate limit exceeded for IP: {client_ip} on {request.url.path}")
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "Rate limit exceeded. Please try again later."}
-        )
 
     response = await call_next(request)
     return response

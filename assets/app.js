@@ -158,6 +158,24 @@ async function apiFetch(url, options = {}) {
 }
 
 /**
+ * Security: Escape HTML to prevent XSS attacks
+ * Converts special characters to HTML entities
+ * @param {string} unsafe - Untrusted user input
+ * @returns {string} Safe HTML string
+ */
+function escapeHtml(unsafe) {
+    if (unsafe === null || unsafe === undefined) {
+        return '';
+    }
+    return String(unsafe)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+/**
  * Check authentication status on page load
  * Verifies token is valid and redirects to login if needed
  */
@@ -3982,8 +4000,11 @@ function createUserRow(user) {
     const currentUserId = AUTH.getUserId();
     const isSelf = user.id === currentUserId;
 
+    // SECURITY: Escape username to prevent XSS
+    const safeUsername = escapeHtml(user.username);
+
     row.innerHTML = `
-        <td><strong>${user.username}</strong></td>
+        <td><strong>${safeUsername}</strong></td>
         <td>${statusBadge}</td>
         <td>${roleBadge}</td>
         <td>${lastLogin}</td>
@@ -4808,13 +4829,20 @@ async function loadAuditLogs(filterType = null) {
                 badgeClass = 'badge-success';
             }
 
+            // SECURITY: Escape all user-controlled data to prevent XSS
+            const safeUsername = escapeHtml(log.username || 'N/A');
+            const safeIpAddress = escapeHtml(log.ip_address);
+            const safeEventType = escapeHtml(log.event_type);
+            const safeDetails = escapeHtml(details);
+            const safeDetailsPreview = escapeHtml(details.substring(0, 50)) + (details.length > 50 ? '...' : '');
+
             tableHTML += `
                 <tr>
                     <td>${timestamp}</td>
-                    <td><span class="badge ${badgeClass}">${log.event_type}</span></td>
-                    <td>${log.username || 'N/A'}</td>
-                    <td>${log.ip_address}</td>
-                    <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${details}">${details.substring(0, 50)}${details.length > 50 ? '...' : ''}</td>
+                    <td><span class="badge ${badgeClass}">${safeEventType}</span></td>
+                    <td>${safeUsername}</td>
+                    <td>${safeIpAddress}</td>
+                    <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${safeDetails}">${safeDetailsPreview}</td>
                 </tr>
             `;
         });
@@ -4868,10 +4896,14 @@ async function loadFailedLogins() {
                 ? '<span class="badge badge-danger">Locked</span>'
                 : '<span class="badge badge-secondary">Failed</span>';
 
+            // SECURITY: Escape user-controlled data to prevent XSS
+            const safeUsername = escapeHtml(attempt.username);
+            const safeIpAddress = escapeHtml(attempt.ip_address);
+
             tableHTML += `
                 <tr>
-                    <td><strong>${attempt.username}</strong></td>
-                    <td>${attempt.ip_address}</td>
+                    <td><strong>${safeUsername}</strong></td>
+                    <td>${safeIpAddress}</td>
                     <td>${timestamp}</td>
                     <td>${statusBadge}</td>
                 </tr>
@@ -4929,13 +4961,18 @@ async function loadActiveSessions() {
                 ? '<span class="badge badge-primary">Admin</span>'
                 : '<span class="badge badge-secondary">User</span>';
 
+            // SECURITY: Escape user-controlled data to prevent XSS
+            const safeUsername = escapeHtml(session.username);
+            const safeIpAddress = escapeHtml(session.ip_address);
+            const safeUserAgent = escapeHtml(session.user_agent || 'N/A');
+
             tableHTML += `
                 <tr>
-                    <td><strong>${session.username}</strong></td>
+                    <td><strong>${safeUsername}</strong></td>
                     <td>${roleBadge}</td>
-                    <td>${session.ip_address}</td>
+                    <td>${safeIpAddress}</td>
                     <td>${timestamp}</td>
-                    <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${session.user_agent || 'N/A'}">${session.user_agent || 'N/A'}</td>
+                    <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;" title="${safeUserAgent}">${safeUserAgent}</td>
                 </tr>
             `;
         });
