@@ -500,6 +500,44 @@
             to { transform: rotate(360deg); }
         }
 
+        /* OR divider */
+        .or-divider {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin: 0.5rem 0;
+            opacity: 0.6;
+        }
+
+        .or-divider::before,
+        .or-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--glass-border), transparent);
+        }
+
+        .or-divider span {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        /* SSO button */
+        .sso-button {
+            background: linear-gradient(135deg,
+                rgba(var(--secondary-color-rgb), 0.8),
+                rgba(var(--secondary-color-rgb), 1)
+            );
+            border: 1px solid rgba(var(--secondary-color-rgb), 0.4);
+            margin-bottom: 0.75rem;
+        }
+
+        .sso-button:hover {
+            box-shadow: 0 8px 24px rgba(var(--secondary-color-rgb), 0.4);
+            border-color: rgba(var(--secondary-color-rgb), 0.6);
+        }
+
         /* Light theme adjustments */
         body[data-theme="light"] .form-input {
             background: rgba(0, 0, 0, 0.03);
@@ -555,6 +593,42 @@
         .credits-link:hover {
             color: var(--secondary-color);
             text-decoration: underline;
+        }
+
+        .credits-content {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .credits-text {
+            flex: 1;
+            text-align: right;
+        }
+
+        .github-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            color: var(--text-muted);
+            transition: all 0.2s ease;
+            opacity: 0.8;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .github-icon:hover {
+            color: var(--primary-color);
+            opacity: 1;
+            transform: scale(1.1);
+        }
+
+        .github-icon svg {
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
         }
 
         /* Responsive design */
@@ -768,8 +842,19 @@
                     </div>
                 </div>
 
+                <!-- Local Login Button -->
                 <button type="submit" id="auth-button" class="login-button">
                     Sign In
+                </button>
+
+                <!-- OR Divider (shown when SSO is available) -->
+                <div class="or-divider" id="or-divider" style="display: none;">
+                    <span>OR</span>
+                </div>
+
+                <!-- SSO Button (shown when OIDC is enabled) -->
+                <button type="button" id="sso-login-btn" class="login-button sso-button" style="display: none;">
+                    <span id="sso-button-text">Login with SSO</span>
                 </button>
             </form>
         </div>
@@ -898,6 +983,58 @@
 
         // Check setup status on page load
         checkSetupStatus();
+
+        // Check OIDC configuration and show SSO button if enabled
+        async function checkOIDCEnabled() {
+            try {
+                const response = await fetch('/api/auth/oidc/config');
+                const config = await response.json();
+
+                if (config.enabled && !isSetupMode) {
+                    // Show SSO button and divider
+                    document.getElementById('sso-login-btn').style.display = 'block';
+                    document.getElementById('or-divider').style.display = 'flex';
+                    document.getElementById('sso-button-text').textContent = config.button_text;
+                }
+            } catch (error) {
+                console.error('Failed to check OIDC configuration:', error);
+                // Silently fail - SSO button will remain hidden
+            }
+        }
+
+        // Handle SSO button click
+        document.getElementById('sso-login-btn').addEventListener('click', async function() {
+            const button = this;
+
+            // Show loading state
+            button.disabled = true;
+            button.classList.add('loading');
+            button.innerHTML = '<span class="button-spinner"></span> Redirecting...';
+
+            try {
+                const response = await fetch('/api/auth/oidc/login');
+                const data = await response.json();
+
+                if (response.ok && data.authorization_url) {
+                    // Redirect to OIDC provider
+                    window.location.href = data.authorization_url;
+                } else {
+                    showError(data.detail || 'Failed to initiate SSO login');
+                    button.disabled = false;
+                    button.classList.remove('loading');
+                    button.innerHTML = '<span id="sso-button-text">' + (button.getAttribute('data-text') || 'Login with SSO') + '</span>';
+                }
+            } catch (error) {
+                console.error('SSO login error:', error);
+                showError('Network error. Please check your connection and try again.');
+                button.disabled = false;
+                button.classList.remove('loading');
+                button.innerHTML = '<span id="sso-button-text">' + (button.getAttribute('data-text') || 'Login with SSO') + '</span>';
+            }
+        });
+
+        // Check OIDC configuration on page load (after checking setup status)
+        setTimeout(checkOIDCEnabled, 100);
 
         // Load release notes
         async function loadReleaseNotes() {
@@ -1134,8 +1271,17 @@
 
     <!-- Credits -->
     <div class="credits">
-        <div class="credits-title">Developed by</div>
-        <a href="https://tidnag.net" target="_blank" rel="noopener noreferrer" class="credits-link">Tidnag.net</a>
+        <div class="credits-content">
+            <a href="https://github.com/Sychedelic-but-cooler/vidnag-framework" target="_blank" rel="noopener noreferrer" class="github-icon" title="View on GitHub">
+                <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                </svg>
+            </a>
+            <div class="credits-text">
+                <div class="credits-title">Developed by</div>
+                <a href="https://github.com/Sychedelic-but-cooler" target="_blank" rel="noopener noreferrer" class="credits-link">Sychedelic-but-cooler</a>
+            </div>
+        </div>
     </div>
 </body>
 </html>

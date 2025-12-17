@@ -164,12 +164,36 @@ class User(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     username = Column(String, unique=True, nullable=False, index=True)
-    password_hash = Column(String, nullable=False)
+    password_hash = Column(String, nullable=True)  # Nullable for OIDC-only users
     is_disabled = Column(Boolean, default=False, nullable=False, index=True)
     is_admin = Column(Boolean, default=False, nullable=False)
     last_login = Column(UTCDateTime, nullable=True)
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # OIDC/OAuth fields
+    oidc_provider = Column(String, nullable=True)  # e.g., "keycloak", "okta", "google"
+    oidc_subject = Column(String, nullable=True, unique=True, index=True)  # OIDC 'sub' claim (unique identifier)
+    oidc_email = Column(String, nullable=True)  # Email from OIDC provider
+    oidc_linked_at = Column(UTCDateTime, nullable=True)  # When OIDC was linked to this account
+    admin_override = Column(Boolean, default=False, nullable=False)  # True if admin manually changed is_admin (prevents OIDC group sync)
+
+
+class OIDCAuthState(Base):
+    """
+    Temporary storage for OIDC authorization state (PKCE flow).
+    Stores state tokens and PKCE verifiers for OAuth flow security.
+    States automatically expire after 10 minutes.
+    """
+    __tablename__ = "oidc_auth_state"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    state = Column(String, unique=True, nullable=False, index=True)  # OAuth 'state' parameter (CSRF protection)
+    code_verifier = Column(String, nullable=False)  # PKCE code_verifier
+    redirect_uri = Column(String, nullable=False)  # Original redirect_uri used in auth request
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    expires_at = Column(UTCDateTime, nullable=False)  # States expire after 10 minutes
+    ip_address = Column(String, nullable=False)  # IP that initiated login (security check)
 
 
 class UserLoginHistory(Base):

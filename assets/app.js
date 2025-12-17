@@ -536,7 +536,6 @@ function initTabs() {
             // This ensures data is fresh when user views the tab
             if (targetTab === 'settings') {
                 loadVersionInfo();
-                loadQueueSettings();
                 loadHardwareInfo();
                 loadCookieFilesSettings();
             }
@@ -1759,67 +1758,6 @@ async function loadVersionInfo() {
 }
 
 
-async function loadQueueSettings() {
-    try {
-        const response = await apiFetch(`${API_BASE}/api/settings/queue`);
-        if (!response.ok) throw new Error('Failed to load queue settings');
-
-        const data = await response.json();
-        document.getElementById('max-concurrent').value = data.max_concurrent_downloads || 2;
-        document.getElementById('max-concurrent-conversions').value = data.max_concurrent_conversions || 1;
-        document.getElementById('max-speed').value = data.max_download_speed || 0;
-        document.getElementById('min-disk-space').value = data.min_disk_space_mb || 1000;
-
-    } catch (error) {
-        showToast('Failed to load queue settings', 'error');
-    }
-}
-
-async function saveQueueSettings() {
-    const button = document.getElementById('save-queue-settings-btn');
-    button.disabled = true;
-    button.textContent = 'Saving...';
-
-    try {
-        const settings = {
-            max_concurrent_downloads: parseInt(document.getElementById('max-concurrent').value),
-            max_concurrent_conversions: parseInt(document.getElementById('max-concurrent-conversions').value),
-            max_download_speed: parseInt(document.getElementById('max-speed').value),
-            min_disk_space_mb: parseInt(document.getElementById('min-disk-space').value)
-        };
-
-        const response = await apiFetch(`${API_BASE}/api/settings/queue`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(settings)
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Save failed');
-        }
-
-        showToast('Queue settings saved successfully!', 'success');
-
-        // Show status message
-        const statusDiv = document.getElementById('queue-settings-status');
-        statusDiv.textContent = 'Settings saved! Changes will apply to new downloads.';
-        statusDiv.className = 'settings-status success';
-        statusDiv.style.display = 'block';
-
-        setTimeout(() => {
-            statusDiv.style.display = 'none';
-        }, 5000);
-
-    } catch (error) {
-        showToast('Failed to save queue settings: ' + error.message, 'error');
-    } finally {
-        button.disabled = false;
-        button.textContent = 'Save Queue Settings';
-    }
-}
 
 /**
  * Render hardware information HTML from data object
@@ -4326,6 +4264,17 @@ function createUserRow(user) {
     const row = document.createElement('tr');
     row.dataset.userId = user.id;
 
+    // Auth Type badge
+    let authTypeBadge;
+    if (user.oidc_provider) {
+        // SSO user - show provider name
+        const providerName = escapeHtml(user.oidc_provider);
+        authTypeBadge = `<span class="badge badge-info" title="SSO: ${providerName}">SSO</span>`;
+    } else {
+        // Local user
+        authTypeBadge = '<span class="badge badge-secondary">Local</span>';
+    }
+
     // Status badge
     const statusBadge = user.is_disabled
         ? '<span class="badge badge-danger">Disabled</span>'
@@ -4351,6 +4300,7 @@ function createUserRow(user) {
 
     row.innerHTML = `
         <td><strong>${safeUsername}</strong></td>
+        <td>${authTypeBadge}</td>
         <td>${statusBadge}</td>
         <td>${roleBadge}</td>
         <td>${lastLogin}</td>
@@ -4611,7 +4561,7 @@ async function loadAdminSettingsTab() {
     if (activeTab) {
         const subsectionName = activeTab.dataset.subsection;
         if (subsectionName === 'app-config') {
-            loadAppConfigForm();
+            await loadAppConfigForm();
         } else if (subsectionName === 'authentication') {
             loadAuthenticationForm();
         } else if (subsectionName === 'security-config') {
@@ -4672,7 +4622,7 @@ async function loadSubsectionData(subsectionName) {
             break;
         case 'app-config':
             await loadAdminSettings();
-            loadAppConfigForm();
+            await loadAppConfigForm();
             break;
         case 'authentication':
             await loadAdminSettings();
@@ -4681,6 +4631,9 @@ async function loadSubsectionData(subsectionName) {
         case 'security-config':
             await loadAdminSettings();
             loadSecurityConfigForm();
+            break;
+        case 'oidc-config':
+            await loadOIDCConfig();
             break;
         case 'audit-log':
             loadAuditLogs();
@@ -5416,7 +5369,7 @@ function loadSecurityConfigForm() {
 /**
  * Load App Config form with current settings
  */
-function loadAppConfigForm() {
+async function loadAppConfigForm() {
     if (!currentAdminSettings) {
         console.warn('loadAppConfigForm: currentAdminSettings is not loaded');
         return;
@@ -5439,6 +5392,20 @@ function loadAppConfigForm() {
         console.log('Set debug_proxy_headers checkbox to:', currentAdminSettings.security.debug_proxy_headers);
     } else {
         console.warn('debug-proxy-headers element not found');
+    }
+
+    // Load queue settings from settings.json
+    try {
+        const response = await apiFetch(`${API_BASE}/api/settings`);
+        if (response.ok) {
+            const settings = await response.json();
+            document.getElementById('max-concurrent').value = settings.max_concurrent_downloads || 2;
+            document.getElementById('max-concurrent-conversions').value = settings.max_concurrent_conversions || 1;
+            document.getElementById('max-speed').value = settings.max_download_speed || 0;
+            document.getElementById('min-disk-space').value = settings.min_disk_space_mb || 1000;
+        }
+    } catch (error) {
+        console.error('Failed to load queue settings:', error);
     }
 }
 
@@ -5487,6 +5454,158 @@ function loadAuthenticationForm() {
         suspiciousIpWindow.value = currentAdminSettings.auth.suspicious_ip_window_hours;
     }
 }
+
+// =================
+// OIDC Configuration Functions
+// =================
+
+/**
+ * Load OIDC configuration
+ */
+async function loadOIDCConfig() {
+    try {
+        console.log('Loading OIDC configuration...');
+        const response = await apiFetch('/api/admin/oidc/config');
+
+        if (!response.ok) {
+            throw new Error(`Failed to load OIDC config: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log('OIDC config loaded:', data);
+        const config = data.oidc;
+
+        // Populate OIDC form fields
+        document.getElementById('oidc-enabled').checked = config.enabled;
+        document.getElementById('oidc-provider-name').value = config.provider_name;
+        document.getElementById('oidc-discovery-url').value = config.discovery_url;
+        document.getElementById('oidc-logout-url').value = config.logout_url || '';
+        document.getElementById('oidc-userinfo-url').value = config.userinfo_url || '';
+        document.getElementById('oidc-client-id').value = config.client_id;
+        document.getElementById('oidc-client-secret').value = config.client_secret;
+        document.getElementById('oidc-button-text').value = config.button_text;
+        document.getElementById('oidc-admin-claim').value = config.admin_group_claim;
+        document.getElementById('oidc-admin-value').value = config.admin_group_value;
+        document.getElementById('oidc-use-pkce').checked = config.use_pkce;
+        document.getElementById('oidc-auto-create').checked = config.auto_create_users;
+        document.getElementById('oidc-username-claim').value = config.username_claim;
+        document.getElementById('oidc-email-claim').value = config.email_claim;
+
+        // Setup PKCE toggle handler for dynamic Client Secret requirement
+        const pkceToggle = document.getElementById('oidc-use-pkce');
+        if (pkceToggle) {
+            // Set initial state
+            updateClientSecretRequirement(pkceToggle.checked);
+
+            // Add change listener
+            pkceToggle.addEventListener('change', (e) => {
+                updateClientSecretRequirement(e.target.checked);
+            });
+        }
+
+        // Setup form submission handler
+        const form = document.getElementById('oidc-config-form');
+        if (form) {
+            // Remove existing listener if any
+            const newForm = form.cloneNode(true);
+            form.parentNode.replaceChild(newForm, form);
+
+            newForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                await saveOIDCConfig();
+            });
+        }
+
+    } catch (error) {
+        console.error('Failed to load OIDC configuration:', error);
+        showToast('Failed to load OIDC configuration', 'error');
+    }
+}
+
+/**
+ * Update Client Secret field requirement based on PKCE setting
+ */
+function updateClientSecretRequirement(pkceEnabled) {
+    const clientSecretInput = document.getElementById('oidc-client-secret');
+    const requiredIndicator = document.getElementById('oidc-secret-required-indicator');
+    const helpText = document.getElementById('oidc-secret-help');
+
+    if (pkceEnabled) {
+        // PKCE enabled - Client Secret is optional
+        if (clientSecretInput) clientSecretInput.removeAttribute('required');
+        if (requiredIndicator) requiredIndicator.style.display = 'none';
+        if (helpText) helpText.textContent = 'OAuth client secret (optional when PKCE is enabled)';
+    } else {
+        // PKCE disabled - Client Secret is required
+        if (clientSecretInput) clientSecretInput.setAttribute('required', 'required');
+        if (requiredIndicator) requiredIndicator.style.display = 'inline';
+        if (helpText) helpText.textContent = 'OAuth client secret (required when PKCE is disabled)';
+    }
+}
+
+/**
+ * Save OIDC configuration
+ */
+async function saveOIDCConfig() {
+    try {
+        console.log('=== Starting OIDC Config Save ===');
+
+        const config = {
+            oidc: {
+                enabled: document.getElementById('oidc-enabled').checked,
+                provider_name: document.getElementById('oidc-provider-name').value,
+                discovery_url: document.getElementById('oidc-discovery-url').value,
+                logout_url: document.getElementById('oidc-logout-url').value,
+                userinfo_url: document.getElementById('oidc-userinfo-url').value,
+                client_id: document.getElementById('oidc-client-id').value,
+                client_secret: document.getElementById('oidc-client-secret').value,
+                button_text: document.getElementById('oidc-button-text').value,
+                admin_group_claim: document.getElementById('oidc-admin-claim').value,
+                admin_group_value: document.getElementById('oidc-admin-value').value,
+                use_pkce: document.getElementById('oidc-use-pkce').checked,
+                auto_create_users: document.getElementById('oidc-auto-create').checked,
+                username_claim: document.getElementById('oidc-username-claim').value,
+                email_claim: document.getElementById('oidc-email-claim').value,
+                scopes: ["openid", "profile", "email"]
+            }
+        };
+
+        console.log('Config to save:', JSON.stringify(config, null, 2));
+
+        console.log('Making API request to /api/admin/oidc/config/update');
+        const response = await apiFetch('/api/admin/oidc/config/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+
+        console.log('Response status:', response.status);
+        console.log('Response ok:', response.ok);
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+            console.error('Error response:', errorData);
+            throw new Error(errorData.detail || 'Failed to save configuration');
+        }
+
+        const result = await response.json();
+        console.log('Save successful! Result:', result);
+
+        showToast('OIDC configuration saved successfully!', 'success');
+
+        // Reload the config to verify it saved
+        console.log('Reloading config to verify save...');
+        await loadOIDCConfig();
+
+    } catch (error) {
+        console.error('=== OIDC Config Save Failed ===');
+        console.error('Error:', error);
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+        showToast('Failed to save OIDC configuration: ' + (error.message || 'Unknown error'), 'error');
+    }
+}
+
 
 /**
  * Render trusted proxies list
@@ -5774,6 +5893,7 @@ async function saveAppConfigSettings(e) {
     currentAdminSettings.security.debug_proxy_headers = debugProxyHeaders.checked;
 
     try {
+        // Save admin settings (security)
         const response = await apiFetch('/api/admin/settings/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -5787,14 +5907,34 @@ async function saveAppConfigSettings(e) {
             throw new Error(error.detail || 'Failed to save settings');
         }
 
-        const result = await response.json();
+        // Save queue settings (settings.json)
+        const queueSettings = {
+            max_concurrent_downloads: parseInt(document.getElementById('max-concurrent').value),
+            max_concurrent_conversions: parseInt(document.getElementById('max-concurrent-conversions').value),
+            max_download_speed: parseInt(document.getElementById('max-speed').value),
+            min_disk_space_mb: parseInt(document.getElementById('min-disk-space').value)
+        };
+
+        const queueResponse = await apiFetch(`${API_BASE}/api/settings/queue`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(queueSettings)
+        });
+
+        if (!queueResponse.ok) {
+            const error = await queueResponse.json();
+            throw new Error(error.detail || 'Failed to save queue settings');
+        }
+
         showToast('App configuration saved successfully! Restart the application to apply changes.', 'success');
 
         // Reload settings to confirm
         await loadAdminSettings();
 
         // Refresh the form to show the updated values
-        loadAppConfigForm();
+        await loadAppConfigForm();
     } catch (error) {
         console.error('Error saving app config settings:', error);
         showToast(`Failed to save settings: ${error.message}`, 'error');
@@ -5895,6 +6035,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize tabs
     initTabs();
 
+    // Load data for the initially active tab
+    const activeTab = document.querySelector('.tab-button.active');
+    if (activeTab) {
+        const targetTab = activeTab.dataset.tab;
+        if (targetTab === 'settings') {
+            loadVersionInfo();
+            loadHardwareInfo();
+            loadCookieFilesSettings();
+        } else if (targetTab === 'files') {
+            loadFiles();
+        } else if (targetTab === 'tools') {
+            loadToolsTab();
+        } else if (targetTab === 'admin-settings') {
+            loadAdminSettingsTab();
+        } else if (targetTab === 'logs') {
+            filterLogs();
+        }
+    }
+
     // Download form submission
     document.getElementById('new-download-form').addEventListener('submit', submitDownload);
 
@@ -5908,7 +6067,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('video-url').addEventListener('input', handleUrlInput);
 
     // Settings buttons
-    document.getElementById('save-queue-settings-btn').addEventListener('click', saveQueueSettings);
     document.getElementById('update-ytdlp-btn').addEventListener('click', updateYtdlp);
     document.getElementById('refresh-hardware-btn').addEventListener('click', refreshHardwareInfo);
     document.getElementById('clear-cache-btn').addEventListener('click', clearYtdlpCache);

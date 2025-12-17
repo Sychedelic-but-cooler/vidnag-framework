@@ -208,44 +208,6 @@
                 </div>
             </section>
 
-            <section class="queue-settings glass-card">
-                <h2>Queue Settings</h2>
-                <div class="form-group">
-                    <label for="max-concurrent">
-                        Max Concurrent Downloads:
-                        <span class="help-icon" title="How many videos can download simultaneously. Higher values use more bandwidth and CPU.">?</span>
-                    </label>
-                    <input type="number" id="max-concurrent" min="1" max="10" value="2">
-                    <p class="form-help">Maximum number of downloads running at the same time</p>
-                </div>
-                <div class="form-group">
-                    <label for="max-concurrent-conversions">
-                        Max Concurrent Conversions:
-                        <span class="help-icon" title="How many MP3 conversions and video transforms can run simultaneously. These are CPU-intensive operations. Recommended: 1 for systems without GPU acceleration.">?</span>
-                    </label>
-                    <input type="number" id="max-concurrent-conversions" min="1" max="5" value="1">
-                    <p class="form-help">Maximum number of MP3/video conversions running at the same time</p>
-                </div>
-                <div class="form-group">
-                    <label for="max-speed">
-                        Max Download Speed (MiB/s):
-                        <span class="help-icon" title="Limits download speed per file. Set to 0 for unlimited. Useful for preventing bandwidth saturation.">?</span>
-                    </label>
-                    <input type="number" id="max-speed" min="0" value="0">
-                    <p class="form-help">0 = unlimited. Limit download speed for each file</p>
-                </div>
-                <div class="form-group">
-                    <label for="min-disk-space">
-                        Pause Downloads at (MB free):
-                        <span class="help-icon" title="Prevents filling up your disk completely. Downloads automatically pause when free space drops below this amount.">?</span>
-                    </label>
-                    <input type="number" id="min-disk-space" min="100" step="100" value="1000">
-                    <p class="form-help">Stop new downloads when disk space is below this threshold</p>
-                </div>
-                <button id="save-queue-settings-btn" class="btn btn-primary">Save Queue Settings</button>
-                <div id="queue-settings-status" class="settings-status" style="display: none;"></div>
-            </section>
-
             <section class="preferences glass-card">
                 <h2>Preferences</h2>
                 <div class="preference-item">
@@ -516,6 +478,7 @@
                         <thead>
                             <tr>
                                 <th>Username</th>
+                                <th>Auth Type</th>
                                 <th>Status</th>
                                 <th>Role</th>
                                 <th>Last Login</th>
@@ -655,6 +618,7 @@
                 <div class="subsection-tabs">
                     <button class="subsection-tab active" data-subsection="app-config">App Config</button>
                     <button class="subsection-tab" data-subsection="authentication">Authentication</button>
+                    <button class="subsection-tab" data-subsection="oidc-config">OIDC / SSO</button>
                     <button class="subsection-tab" data-subsection="security-config">Security Config</button>
                     <button class="subsection-tab" data-subsection="audit-log">Audit Log</button>
                 </div>
@@ -693,6 +657,49 @@
                                     <input type="checkbox" id="debug-proxy-headers">
                                     <span class="toggle-slider"></span>
                                 </label>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- Queue Settings -->
+                        <div class="settings-section">
+                            <h4>Queue Configuration</h4>
+
+                            <div class="form-group">
+                                <label for="max-concurrent">
+                                    Max Concurrent Downloads
+                                    <span class="help-icon" title="How many videos can download simultaneously. Higher values use more bandwidth and CPU.">?</span>
+                                </label>
+                                <input type="number" id="max-concurrent" class="form-control" min="1" max="10" value="2" required>
+                                <small style="color: var(--text-muted);">Maximum number of downloads running at the same time.</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="max-concurrent-conversions">
+                                    Max Concurrent Conversions
+                                    <span class="help-icon" title="How many MP3 conversions and video transforms can run simultaneously. These are CPU-intensive operations. Recommended: 1 for systems without GPU acceleration.">?</span>
+                                </label>
+                                <input type="number" id="max-concurrent-conversions" class="form-control" min="1" max="5" value="1" required>
+                                <small style="color: var(--text-muted);">Maximum number of MP3/video conversions running at the same time.</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="max-speed">
+                                    Max Download Speed (MiB/s)
+                                    <span class="help-icon" title="Limits download speed per file. Set to 0 for unlimited. Useful for preventing bandwidth saturation.">?</span>
+                                </label>
+                                <input type="number" id="max-speed" class="form-control" min="0" value="0" required>
+                                <small style="color: var(--text-muted);">0 = unlimited. Limit download speed for each file.</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="min-disk-space">
+                                    Pause Downloads at (MB free)
+                                    <span class="help-icon" title="Prevents filling up your disk completely. Downloads automatically pause when free space drops below this amount.">?</span>
+                                </label>
+                                <input type="number" id="min-disk-space" class="form-control" min="100" step="100" value="1000" required>
+                                <small style="color: var(--text-muted);">Stop new downloads when disk space is below this threshold.</small>
                             </div>
                         </div>
 
@@ -787,6 +794,148 @@
 
                         <div style="margin-top: 2rem;">
                             <button type="submit" class="btn btn-primary">Save Authentication Settings</button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- OIDC / SSO Subsection -->
+                <div id="oidc-config-subsection" class="subsection-content">
+                    <h3>OIDC / Single Sign-On Configuration</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure OIDC/OAuth authentication with external identity providers (Keycloak, Okta, Google, etc.).</p>
+
+                    <div class="warning-box" style="margin-bottom: 2rem;">
+                        <strong>⚠️ Important:</strong> Changes to these settings require an application restart to take effect. Authentication must be enabled first.
+                    </div>
+
+                    <form id="oidc-config-form">
+                        <!-- OIDC Toggle -->
+                        <div class="settings-section">
+                            <h4>OIDC / SSO Status</h4>
+
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Enable OIDC / SSO</strong>
+                                    <p>Allow users to login with external identity providers</p>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="oidc-enabled">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Use PKCE Flow</strong>
+                                    <p>Enable Proof Key for Code Exchange for enhanced security (recommended). When enabled, Client Secret is optional.</p>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="oidc-use-pkce">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- Provider Settings -->
+                        <div class="settings-section">
+                            <h4>Provider Configuration</h4>
+
+                            <div class="form-group">
+                                <label for="oidc-provider-name">Provider Name</label>
+                                <input type="text" id="oidc-provider-name" class="form-control" placeholder="Keycloak" required>
+                                <small style="color: var(--text-muted);">Display name for the identity provider</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="oidc-discovery-url">Configuration URL</label>
+                                <input type="text" id="oidc-discovery-url" class="form-control" placeholder="https://auth.example.com/realms/myrealm/.well-known/openid-configuration" required>
+                                <small style="color: var(--text-muted);">OIDC configuration endpoint (usually ends with .well-known/openid-configuration)</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="oidc-logout-url">Logout URL</label>
+                                <input type="text" id="oidc-logout-url" class="form-control" placeholder="https://auth.example.com/realms/myrealm/protocol/openid-connect/logout">
+                                <small style="color: var(--text-muted);">Optional: URL to logout from the identity provider</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="oidc-userinfo-url">Userinfo URL</label>
+                                <input type="text" id="oidc-userinfo-url" class="form-control" placeholder="https://auth.example.com/realms/myrealm/protocol/openid-connect/userinfo">
+                                <small style="color: var(--text-muted);">Optional: Override the userinfo endpoint (auto-detected from configuration URL if not set)</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="oidc-client-id">Client ID <span style="color: var(--danger);">*</span></label>
+                                <input type="text" id="oidc-client-id" class="form-control" placeholder="vidnag-framework" required>
+                                <small style="color: var(--text-muted);">OAuth client ID from your identity provider (always required)</small>
+                            </div>
+
+                            <div class="form-group" id="oidc-client-secret-group">
+                                <label for="oidc-client-secret">Client Secret <span id="oidc-secret-required-indicator" style="color: var(--danger);">*</span></label>
+                                <input type="password" id="oidc-client-secret" class="form-control" placeholder="Enter client secret">
+                                <small style="color: var(--text-muted);" id="oidc-secret-help">OAuth client secret (required when PKCE is disabled)</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="oidc-button-text">Login Button Text</label>
+                                <input type="text" id="oidc-button-text" class="form-control" placeholder="Login with SSO" required>
+                                <small style="color: var(--text-muted);">Text shown on the SSO login button</small>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- Admin Group Configuration -->
+                        <div class="settings-section">
+                            <h4>Admin Group Mapping</h4>
+                            <p style="color: var(--text-muted); margin-bottom: 1rem;">Configure which OIDC claim and value determine admin privileges.</p>
+
+                            <div class="form-group">
+                                <label for="oidc-admin-claim">Admin Group Claim</label>
+                                <input type="text" id="oidc-admin-claim" class="form-control" placeholder="groups" required>
+                                <small style="color: var(--text-muted);">OIDC claim containing groups/roles (e.g., "groups", "roles")</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="oidc-admin-value">Admin Group Value</label>
+                                <input type="text" id="oidc-admin-value" class="form-control" placeholder="vidnag-admins" required>
+                                <small style="color: var(--text-muted);">Group/role name that indicates admin privileges</small>
+                            </div>
+                        </div>
+
+                        <div class="cleanup-divider"></div>
+
+                        <!-- Advanced Settings -->
+                        <div class="settings-section">
+                            <h4>Advanced Settings</h4>
+
+                            <div class="preference-item">
+                                <div class="preference-text">
+                                    <strong>Auto-Create Users</strong>
+                                    <p>Automatically create new users when they login via OIDC</p>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="oidc-auto-create">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="oidc-username-claim">Username Claim</label>
+                                <input type="text" id="oidc-username-claim" class="form-control" placeholder="preferred_username" required>
+                                <small style="color: var(--text-muted);">OIDC claim to use as username</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="oidc-email-claim">Email Claim</label>
+                                <input type="text" id="oidc-email-claim" class="form-control" placeholder="email" required>
+                                <small style="color: var(--text-muted);">OIDC claim containing email address</small>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 2rem;">
+                            <button type="submit" class="btn btn-primary">Save OIDC Configuration</button>
                         </div>
                     </form>
                 </div>

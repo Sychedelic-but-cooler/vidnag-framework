@@ -9,7 +9,7 @@ file browsing, and comprehensive logging.
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request, UploadFile, File, Form, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # Data validation and database
@@ -40,9 +40,10 @@ import unicodedata
 import time
 import uuid
 import platform
+import httpx
 
 # Application modules
-from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings, JWTKey, AuthAuditLog
+from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings, JWTKey, AuthAuditLog, OIDCAuthState
 from sqlalchemy import or_, and_
 from settings import settings
 from admin_settings import get_admin_settings
@@ -55,9 +56,11 @@ from security import (
     validate_settings_update
 )
 from auth import PasswordService, JWTService, AuthService, AuditLogService
+from external_auth import get_external_auth_config, reload_external_auth_config
+from oidc_auth import OIDCService
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.4.4-12"
+APP_VERSION = "2.6.20-12"
 
 def cleanup_old_logs():
     """
@@ -1450,6 +1453,8 @@ class UserResponse(BaseModel):
     is_disabled: bool
     created_at: datetime
     last_login: Optional[datetime]
+    oidc_provider: Optional[str] = None
+    oidc_email: Optional[str] = None
 
 
 class CreateUserRequest(BaseModel):
@@ -2796,6 +2801,505 @@ async def refresh_token(
     )
 
 
+# ===== OIDC/OAuth Authentication Endpoints =====
+
+@app.get("/api/auth/oidc/config")
+async def get_oidc_config():
+    """
+    Get public OIDC configuration for frontend.
+
+    Returns configuration needed for displaying SSO login button
+    and provider information. Does not include sensitive data.
+
+    This endpoint is PUBLIC (no authentication required).
+    """
+    external_auth = get_external_auth_config()
+    return external_auth.get_public_config()
+
+
+@app.get("/api/auth/oidc/login")
+async def oidc_login_initiate(
+    request: Request,
+    db: Session = Depends(get_db_session)
+):
+    """
+    Initiate OIDC login flow.
+
+    Generates authorization URL with PKCE (if enabled) and redirects
+    user to OIDC provider for authentication.
+
+    This endpoint is PUBLIC (no authentication required).
+    """
+    admin_settings = get_admin_settings()
+    external_auth = get_external_auth_config()
+
+    # Check if OIDC is enabled
+    if not external_auth.oidc.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OIDC authentication is not enabled"
+        )
+
+    # Check if main authentication is enabled
+    if not admin_settings.auth.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication system is not enabled"
+        )
+
+    try:
+        # Fetch OIDC provider metadata
+        metadata = await OIDCService.get_oidc_metadata(external_auth.oidc.discovery_url)
+        authorization_endpoint = metadata.get("authorization_endpoint")
+
+        if not authorization_endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OIDC provider metadata is invalid"
+            )
+
+        # Get client IP for security
+        ip_address = get_client_ip(request)
+
+        # Generate PKCE pair if enabled
+        code_verifier = None
+        code_challenge = None
+        if external_auth.oidc.use_pkce:
+            code_verifier, code_challenge = OIDCService.generate_pkce_pair()
+
+        # Build redirect URI (callback endpoint)
+        redirect_uri = str(request.base_url).rstrip('/') + "/api/auth/oidc/callback"
+
+        # Create auth state for CSRF protection
+        state = OIDCService.create_auth_state(
+            db=db,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+            ip_address=ip_address
+        )
+
+        # Build authorization URL
+        authorization_url = OIDCService.build_authorization_url(
+            authorization_endpoint=authorization_endpoint,
+            client_id=external_auth.oidc.client_id,
+            redirect_uri=redirect_uri,
+            scopes=external_auth.oidc.scopes,
+            state=state,
+            code_challenge=code_challenge
+        )
+
+        # Log audit event
+        AuditLogService.log_event(
+            event_type="oidc_login_initiated",
+            ip_address=ip_address,
+            db=db,
+            details=f"Provider: {external_auth.oidc.provider_name}"
+        )
+
+        await emit_log("INFO", "Authentication", f"OIDC login initiated from {ip_address}")
+
+        return {"authorization_url": authorization_url}
+
+    except httpx.HTTPError as e:
+        await emit_log("ERROR", "Authentication", f"Failed to connect to OIDC provider: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Cannot connect to OIDC provider: {str(e)}"
+        )
+    except Exception as e:
+        await emit_log("ERROR", "Authentication", f"OIDC login initiation failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initiate OIDC login: {str(e)}"
+        )
+
+
+@app.get("/api/auth/oidc/callback", response_model=LoginResponse)
+async def oidc_callback(
+    request: Request,
+    code: str,
+    state: str,
+    db: Session = Depends(get_db_session)
+):
+    """
+    Handle OIDC callback from provider.
+
+    Exchanges authorization code for tokens, fetches user info,
+    and logs the user in by issuing a JWT token.
+
+    This endpoint is PUBLIC (no authentication required).
+    """
+    admin_settings = get_admin_settings()
+    external_auth = get_external_auth_config()
+    ip_address = get_client_ip(request)
+
+    # Check if OIDC is enabled
+    if not external_auth.oidc.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OIDC authentication is not enabled"
+        )
+
+    try:
+        # Validate and consume state token (CSRF protection)
+        auth_state = OIDCService.validate_and_consume_state(db, state, ip_address)
+        if not auth_state:
+            await emit_log("WARNING", "Authentication", f"Invalid OIDC state from {ip_address}")
+            AuditLogService.log_event(
+                event_type="oidc_login_failed",
+                ip_address=ip_address,
+                db=db,
+                details="Invalid or expired state token"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired state token"
+            )
+
+        # Fetch OIDC provider metadata
+        metadata = await OIDCService.get_oidc_metadata(external_auth.oidc.discovery_url)
+        token_endpoint = metadata.get("token_endpoint")
+        userinfo_endpoint = metadata.get("userinfo_endpoint")
+
+        if not token_endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OIDC provider metadata is invalid (missing token_endpoint)"
+            )
+
+        # Use custom userinfo_url if provided, otherwise use from metadata
+        if external_auth.oidc.userinfo_url:
+            userinfo_endpoint = external_auth.oidc.userinfo_url
+        elif not userinfo_endpoint:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OIDC provider metadata is invalid (missing userinfo_endpoint)"
+            )
+
+        # Exchange authorization code for tokens
+        token_response = await OIDCService.exchange_code_for_tokens(
+            code=code,
+            redirect_uri=auth_state.redirect_uri,
+            token_endpoint=token_endpoint,
+            client_id=external_auth.oidc.client_id,
+            client_secret=external_auth.oidc.client_secret,
+            code_verifier=auth_state.code_verifier if external_auth.oidc.use_pkce else None
+        )
+
+        access_token = token_response.get("access_token")
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OIDC provider did not return access token"
+            )
+
+        # Fetch user info from OIDC provider
+        userinfo = await OIDCService.get_userinfo(userinfo_endpoint, access_token)
+
+        # Find or create user
+        user, error = OIDCService.find_or_create_user(
+            db=db,
+            userinfo=userinfo,
+            config=external_auth.oidc,
+            provider_name=external_auth.oidc.provider_name
+        )
+
+        if error:
+            await emit_log("WARNING", "Authentication", f"OIDC login failed for {userinfo.get('preferred_username', 'unknown')}: {error}")
+            AuditLogService.log_event(
+                event_type="oidc_login_failed",
+                ip_address=ip_address,
+                db=db,
+                username=userinfo.get(external_auth.oidc.username_claim),
+                details=error
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=error
+            )
+
+        # Check if account is disabled
+        if user.is_disabled:
+            await emit_log("WARNING", "Authentication", f"Disabled user {user.username} attempted OIDC login from {ip_address}")
+            AuditLogService.log_event(
+                event_type="oidc_login_failed",
+                ip_address=ip_address,
+                db=db,
+                user_id=user.id,
+                username=user.username,
+                details="Account is disabled"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is disabled"
+            )
+
+        # Update last_login
+        user.last_login = datetime.now(timezone.utc)
+
+        # Update is_admin if not manually overridden
+        if not user.admin_override:
+            new_admin_status = OIDCService.determine_admin_status(userinfo, external_auth.oidc)
+            if user.is_admin != new_admin_status:
+                old_status = user.is_admin
+                user.is_admin = new_admin_status
+                await emit_log("INFO", "Authentication", f"Admin status changed for {user.username}: {old_status} -> {new_admin_status}")
+                AuditLogService.log_event(
+                    event_type="admin_status_changed",
+                    ip_address=ip_address,
+                    db=db,
+                    user_id=user.id,
+                    username=user.username,
+                    details=f"Changed from {old_status} to {new_admin_status} via OIDC group sync"
+                )
+
+        db.commit()
+
+        # Generate JWT token
+        jwt_token = JWTService.create_access_token(
+            user_id=user.id,
+            username=user.username,
+            is_admin=user.is_admin,
+            db=db,
+            admin_settings=admin_settings
+        )
+
+        # Log successful OIDC login
+        AuditLogService.log_event(
+            event_type="oidc_login_success",
+            ip_address=ip_address,
+            db=db,
+            user_id=user.id,
+            username=user.username,
+            details=f"Provider: {external_auth.oidc.provider_name}"
+        )
+
+        await emit_log("INFO", "Authentication", f"User {user.username} logged in via OIDC from {ip_address}")
+
+        # Return HTML that stores token in localStorage and redirects to main app
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Login Successful</title>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                }}
+                .spinner {{
+                    border: 4px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 50%;
+                    border-top: 4px solid white;
+                    width: 40px;
+                    height: 40px;
+                    animation: spin 1s linear infinite;
+                    margin: 20px auto;
+                }}
+                @keyframes spin {{
+                    0% {{ transform: rotate(0deg); }}
+                    100% {{ transform: rotate(360deg); }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>Login Successful!</h2>
+                <div class="spinner"></div>
+                <p>Redirecting to application...</p>
+            </div>
+            <script>
+                // Store only the JWT token in localStorage
+                // SECURITY: User info (username, is_admin) is fetched from server on page load
+                // This prevents users from editing localStorage to gain privileges
+                localStorage.setItem('auth_token', '{jwt_token}');
+
+                // Redirect to main application
+                window.location.href = '/';
+            </script>
+        </body>
+        </html>
+        """
+
+        return HTMLResponse(content=html_content)
+
+    except HTTPException as e:
+        # Return user-friendly error page that redirects to login
+        error_message = e.detail
+        await emit_log("ERROR", "Authentication", f"OIDC login failed: {error_message}")
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Login Failed</title>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                    max-width: 500px;
+                    padding: 2rem;
+                }}
+                .error-icon {{
+                    font-size: 4rem;
+                    margin-bottom: 1rem;
+                }}
+                .message {{
+                    background: rgba(0, 0, 0, 0.2);
+                    padding: 1rem;
+                    border-radius: 8px;
+                    margin: 1rem 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="error-icon">⚠️</div>
+                <h2>Login Failed</h2>
+                <div class="message">
+                    <p>{error_message}</p>
+                </div>
+                <p>Redirecting to login page...</p>
+            </div>
+            <script>
+                setTimeout(function() {{
+                    window.location.href = '/assets/login.html';
+                }}, 3000);
+            </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=e.status_code)
+
+    except httpx.HTTPError as e:
+        await emit_log("ERROR", "Authentication", f"Failed to connect to OIDC provider during callback: {str(e)}")
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Login Failed</title>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                    max-width: 500px;
+                    padding: 2rem;
+                }}
+                .error-icon {{
+                    font-size: 4rem;
+                    margin-bottom: 1rem;
+                }}
+                .message {{
+                    background: rgba(0, 0, 0, 0.2);
+                    padding: 1rem;
+                    border-radius: 8px;
+                    margin: 1rem 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="error-icon">🔌</div>
+                <h2>Connection Error</h2>
+                <div class="message">
+                    <p>Cannot connect to SSO provider. Please try again later.</p>
+                </div>
+                <p>Redirecting to login page...</p>
+            </div>
+            <script>
+                setTimeout(function() {{
+                    window.location.href = '/assets/login.html';
+                }}, 3000);
+            </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=503)
+
+    except Exception as e:
+        await emit_log("ERROR", "Authentication", f"OIDC callback failed: {str(e)}")
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Login Failed</title>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                    max-width: 500px;
+                    padding: 2rem;
+                }}
+                .error-icon {{
+                    font-size: 4rem;
+                    margin-bottom: 1rem;
+                }}
+                .message {{
+                    background: rgba(0, 0, 0, 0.2);
+                    padding: 1rem;
+                    border-radius: 8px;
+                    margin: 1rem 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="error-icon">❌</div>
+                <h2>Login Failed</h2>
+                <div class="message">
+                    <p>An unexpected error occurred. Please try again.</p>
+                </div>
+                <p>Redirecting to login page...</p>
+            </div>
+            <script>
+                setTimeout(function() {{
+                    window.location.href = '/assets/login.html';
+                }}, 3000);
+            </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=500)
+
+
 # Helper functions for download visibility and access control
 
 def enrich_download_with_user(db: Session, download: Download) -> DownloadResponse:
@@ -3883,6 +4387,264 @@ async def get_admin_settings_ui(
             "cleanup_interval_seconds": admin_settings.rate_limit.cleanup_interval_seconds
         }
     }
+
+
+# ===== OIDC Admin Endpoints =====
+
+@app.get("/api/admin/oidc/config")
+async def get_oidc_admin_config(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Get full OIDC configuration for admin UI (ADMIN ONLY).
+
+    Returns complete OIDC configuration with client_secret redacted for security.
+    """
+    external_auth = get_external_auth_config()
+    return external_auth.get_admin_config(redact_secret=True)
+
+
+@app.post("/api/admin/oidc/config/update")
+async def update_oidc_config(
+    config_update: Dict[str, Any],
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session),
+    request: Request = None
+):
+    """
+    Update OIDC configuration (ADMIN ONLY).
+
+    Validates and saves the new OIDC configuration to external_auth.json.
+    """
+    try:
+        print("=== OIDC Config Update Endpoint Called ===")
+        print(f"Received config update: {config_update}")
+
+        # Get current config
+        external_auth = get_external_auth_config()
+        print(f"Current config file: {external_auth.config_file}")
+
+        # If client_secret is masked (********), keep the existing secret
+        if "oidc" in config_update and "client_secret" in config_update["oidc"]:
+            if config_update["oidc"]["client_secret"] == "********":
+                print("Client secret is masked, keeping existing secret")
+                current_config = external_auth.get_admin_config(redact_secret=False)
+                config_update["oidc"]["client_secret"] = current_config["oidc"]["client_secret"]
+
+        # Save updated configuration
+        print(f"Saving config to file: {external_auth.config_file}")
+        external_auth.save_config(config_update)
+        print("Config saved successfully!")
+
+        # Reload configuration
+        print("Reloading configuration...")
+        reload_external_auth_config()
+        print("Configuration reloaded!")
+
+        # Log audit event
+        ip_address = get_client_ip(request) if request else "unknown"
+        AuditLogService.log_event(
+            event_type="oidc_config_updated",
+            ip_address=ip_address,
+            db=db,
+            user_id=current_admin.get("sub"),
+            username=current_admin.get("username"),
+            details=f"OIDC enabled: {config_update.get('oidc', {}).get('enabled', False)}"
+        )
+
+        await emit_log("INFO", "Configuration", f"OIDC configuration updated by {current_admin.get('username')}")
+
+        return {"message": "OIDC configuration updated successfully"}
+
+    except Exception as e:
+        print(f"=== ERROR updating OIDC config: {str(e)} ===")
+        print(f"Exception type: {type(e)}")
+        import traceback
+        traceback.print_exc()
+        await emit_log("ERROR", "Configuration", f"Failed to update OIDC config: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update OIDC configuration: {str(e)}"
+        )
+
+
+class LinkOIDCAccountRequest(BaseModel):
+    """Request model for linking OIDC account to existing user"""
+    user_id: str
+    oidc_provider: str
+    oidc_subject: str
+    oidc_email: Optional[str] = None
+
+
+@app.post("/api/admin/oidc/link-account")
+async def link_oidc_account(
+    link_data: LinkOIDCAccountRequest,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session),
+    request: Request = None
+):
+    """
+    Manually link OIDC account to existing user (ADMIN ONLY).
+
+    This endpoint allows admins to resolve username conflicts by manually
+    linking an OIDC account to an existing local user account.
+    """
+    try:
+        # Find user by user_id
+        user = db.query(User).filter(User.id == link_data.user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        # Check if user already has OIDC linked
+        if user.oidc_subject:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"User already has OIDC account linked ({user.oidc_provider})"
+            )
+
+        # Check if oidc_subject is already used by another user
+        existing_oidc = db.query(User).filter(User.oidc_subject == link_data.oidc_subject).first()
+        if existing_oidc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"OIDC subject already linked to user '{existing_oidc.username}'"
+            )
+
+        # Link OIDC account
+        user.oidc_provider = link_data.oidc_provider
+        user.oidc_subject = link_data.oidc_subject
+        user.oidc_email = link_data.oidc_email
+        user.oidc_linked_at = datetime.now(timezone.utc)
+        user.password_hash = None  # Remove local password (OIDC-only)
+
+        db.commit()
+
+        # Log audit event
+        ip_address = get_client_ip(request) if request else "unknown"
+        AuditLogService.log_event(
+            event_type="oidc_account_linked",
+            ip_address=ip_address,
+            db=db,
+            user_id=current_admin.get("sub"),
+            username=current_admin.get("username"),
+            details=f"Linked OIDC account ({link_data.oidc_provider}) to user '{user.username}'"
+        )
+
+        await emit_log("INFO", "User Management", f"OIDC account linked to {user.username} by {current_admin.get('username')}")
+
+        return {"message": f"OIDC account linked successfully to user '{user.username}'"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await emit_log("ERROR", "User Management", f"Failed to link OIDC account: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to link OIDC account: {str(e)}"
+        )
+
+
+@app.post("/api/admin/oidc/unlink-account")
+async def unlink_oidc_account(
+    user_id: str,
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session),
+    request: Request = None
+):
+    """
+    Unlink OIDC account from user (ADMIN ONLY).
+
+    Removes OIDC linkage from user account. User will need to set
+    a local password to login again.
+    """
+    try:
+        # Find user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        if not user.oidc_subject:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User does not have OIDC account linked"
+            )
+
+        # Unlink OIDC
+        oidc_provider = user.oidc_provider
+        user.oidc_provider = None
+        user.oidc_subject = None
+        user.oidc_email = None
+        user.oidc_linked_at = None
+
+        db.commit()
+
+        # Log audit event
+        ip_address = get_client_ip(request) if request else "unknown"
+        AuditLogService.log_event(
+            event_type="oidc_account_unlinked",
+            ip_address=ip_address,
+            db=db,
+            user_id=current_admin.get("sub"),
+            username=current_admin.get("username"),
+            details=f"Unlinked OIDC account ({oidc_provider}) from user '{user.username}'"
+        )
+
+        await emit_log("INFO", "User Management", f"OIDC account unlinked from {user.username} by {current_admin.get('username')}")
+
+        return {"message": f"OIDC account unlinked from user '{user.username}'"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await emit_log("ERROR", "User Management", f"Failed to unlink OIDC account: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to unlink OIDC account: {str(e)}"
+        )
+
+
+@app.get("/api/admin/users/oidc-linked")
+async def get_oidc_linked_users(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Get list of users with OIDC accounts linked (ADMIN ONLY).
+
+    Returns all users that have OIDC authentication configured.
+    """
+    try:
+        oidc_users = db.query(User).filter(User.oidc_subject.isnot(None)).all()
+
+        return {
+            "users": [
+                {
+                    "id": user.id,
+                    "username": user.username,
+                    "oidc_provider": user.oidc_provider,
+                    "oidc_subject": user.oidc_subject,
+                    "oidc_email": user.oidc_email,
+                    "oidc_linked_at": user.oidc_linked_at.isoformat() if user.oidc_linked_at else None,
+                    "is_admin": user.is_admin,
+                    "admin_override": user.admin_override,
+                    "is_disabled": user.is_disabled
+                }
+                for user in oidc_users
+            ]
+        }
+
+    except Exception as e:
+        await emit_log("ERROR", "User Management", f"Failed to get OIDC linked users: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get OIDC linked users: {str(e)}"
+        )
 
 
 @app.post("/api/admin/settings/update")
