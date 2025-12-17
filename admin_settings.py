@@ -79,7 +79,6 @@ DEFAULT_ADMIN_SETTINGS = {
             "/api/auth/setup",
             "/api/auth/check-setup",
             "/api/auth/status",
-            "/api/admin/test-cors",
             "/api/files/download/*",
             "/api/files/thumbnail/*",
             "/api/files/video/*",

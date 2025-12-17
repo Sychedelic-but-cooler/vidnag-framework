@@ -2436,6 +2436,11 @@ let logsPollingInterval = null;
 let allLogs = [];
 let latestLogSequence = 0;
 
+// Log type management for dual logging system
+let currentLogType = 'user';  // Default to user logs
+let latestAdminSequence = 0;
+let latestUserSequence = 0;
+
 /**
  * Format a log timestamp for display in the user's local timezone
  * Automatically converts UTC timestamps to browser's local timezone
@@ -2537,8 +2542,11 @@ function displayLogs(logs) {
     if (logs.length === 0) {
         const isPolling = logsPollingInterval !== null;
 
+        // Determine log type text for display
+        let logTypeText = currentLogType === 'both' ? 'all logs' : `${currentLogType} logs`;
+
         if (isPolling) {
-            display.innerHTML = '<p class="empty-state">✅ Connected to log system. Logs will appear here as events occur...</p>';
+            display.innerHTML = `<p class="empty-state">✅ Connected to log system. Viewing ${logTypeText}. Logs will appear here as events occur...</p>`;
         } else {
             display.innerHTML = '<p class="empty-state">❌ Log polling not running. Check browser console for errors.</p>';
         }
@@ -2558,12 +2566,33 @@ async function pollLogs() {
     try {
         // Build query parameters
         const params = new URLSearchParams();
-        if (latestLogSequence > 0) {
-            params.append('since_sequence', latestLogSequence);
+
+        // Add log_type parameter
+        params.append('log_type', currentLogType);
+
+        // Use appropriate sequence based on log type
+        let sinceSequence = 0;
+        if (currentLogType === 'user') {
+            sinceSequence = latestUserSequence;
+        } else if (currentLogType === 'admin') {
+            sinceSequence = latestAdminSequence;
+        } else if (currentLogType === 'both') {
+            // For "both", use the max of both sequences
+            sinceSequence = Math.max(latestAdminSequence, latestUserSequence);
+        }
+
+        if (sinceSequence > 0) {
+            params.append('since_sequence', sinceSequence);
         }
 
         const response = await apiFetch(`${API_BASE}/api/logs?${params}`);
         if (!response.ok) {
+            // Handle 403 for non-admins trying to access admin logs
+            if (response.status === 403) {
+                console.warn('⚠️ Access denied to admin logs, switching to user logs');
+                currentLogType = 'user';
+                return;
+            }
             throw new Error(`HTTP ${response.status}`);
         }
 
@@ -2574,12 +2603,15 @@ async function pollLogs() {
         pollLogs.callCount++;
 
         if (pollLogs.callCount <= 10 || data.logs.length > 0) {
-            console.log(`📨 Poll #${pollLogs.callCount}: Received ${data.logs.length} new logs (seq: ${latestLogSequence} → ${data.latest_sequence})`);
+            console.log(`📨 Poll #${pollLogs.callCount}: Received ${data.logs.length} new ${data.log_type} logs`);
         }
 
-        // Update latest sequence
-        if (data.latest_sequence > 0) {
-            latestLogSequence = data.latest_sequence;
+        // Update sequences based on response
+        if (data.latest_admin_sequence > 0) {
+            latestAdminSequence = data.latest_admin_sequence;
+        }
+        if (data.latest_user_sequence > 0) {
+            latestUserSequence = data.latest_user_sequence;
         }
 
         // Add new logs
@@ -2631,6 +2663,45 @@ function stopLogsPolling() {
 function clearLogsDisplay() {
     allLogs = [];
     document.getElementById('logs-display').innerHTML = '<p class="empty-state">Display cleared. Waiting for new logs...</p>';
+}
+
+/**
+ * Initialize log type controls for admin users
+ * Shows the log type selector for admins and sets up event handling
+ * SECURITY: Uses AUTH.isAdmin() which checks server-verified status in memory
+ */
+function initializeLogControls() {
+    // Use AUTH.isAdmin() to check admin status securely
+    // This prevents users from manipulating localStorage to gain admin access
+    const isAdmin = AUTH.isAdmin();
+
+    if (isAdmin) {
+        // Show log type selector for admins
+        const container = document.getElementById('log-type-selector-container');
+        if (container) {
+            container.style.display = 'block';
+
+            // Handle log type changes
+            const logTypeSelector = document.getElementById('log-type-selector');
+            logTypeSelector.addEventListener('change', async (e) => {
+                currentLogType = e.target.value;
+                console.log(`📊 Switching to ${currentLogType} logs`);
+
+                // Clear existing logs and reset sequences
+                allLogs = [];
+                latestLogSequence = 0;
+                latestAdminSequence = 0;
+                latestUserSequence = 0;
+
+                // Immediately fetch logs of new type
+                await pollLogs();
+                filterLogs();
+            });
+        }
+    } else {
+        // Regular users always see user logs
+        currentLogType = 'user';
+    }
 }
 
 
@@ -5821,6 +5892,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('log-component-filter').addEventListener('change', filterLogs);
     document.getElementById('log-download-filter').addEventListener('input', filterLogs);
     document.getElementById('clear-logs-btn').addEventListener('click', clearLogsDisplay);
+    initializeLogControls();  // Initialize log type selector for admins
 
     // File browser controls
     document.getElementById('select-all-files-btn').addEventListener('click', toggleSelectAll);

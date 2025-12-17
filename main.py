@@ -56,7 +56,7 @@ from security import (
 from auth import PasswordService, JWTService, AuthService, AuditLogService
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.4.2-12"
+APP_VERSION = "2.4.4-12"
 
 def cleanup_old_logs():
     """
@@ -267,6 +267,41 @@ app_file_logger.setLevel(logging.INFO)
 app_file_logger.addHandler(file_handler)
 app_file_logger.propagate = False  # Don't send logs to parent logger
 
+# Dual logging system: separate admin and user logs
+# Admin log handler - for system management and security events
+admin_file_handler = TimedRotatingFileHandler(
+    filename="logs/admin.log",
+    when="midnight",         # Rotate at midnight
+    interval=1,              # Every 1 day
+    backupCount=3,           # Keep 3 days of logs
+    encoding="utf-8"
+)
+admin_file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(levelname)s - %(message)s'
+))
+
+admin_file_logger = logging.getLogger("admin_logs")
+admin_file_logger.setLevel(logging.INFO)
+admin_file_logger.addHandler(admin_file_handler)
+admin_file_logger.propagate = False
+
+# User log handler - for downloads and conversions
+user_file_handler = TimedRotatingFileHandler(
+    filename="logs/user.log",
+    when="midnight",         # Rotate at midnight
+    interval=1,              # Every 1 day
+    backupCount=3,           # Keep 3 days of logs
+    encoding="utf-8"
+)
+user_file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(levelname)s - %(message)s'
+))
+
+user_file_logger = logging.getLogger("user_logs")
+user_file_logger.setLevel(logging.INFO)
+user_file_logger.addHandler(user_file_handler)
+user_file_logger.propagate = False
+
 # Configure Cross-Origin Resource Sharing (CORS)
 # This allows the frontend to make API requests from different domains
 # Necessary when the frontend is served from a different origin than the API
@@ -427,7 +462,16 @@ log_websockets: list[WebSocket] = []
 MAX_LOG_WEBSOCKET_CONNECTIONS = 100
 WEBSOCKET_IDLE_TIMEOUT = 300  # 5 minutes in seconds - disconnect idle connections
 
-# In-memory circular buffer for logs
+# In-memory circular buffers for logs (dual-system)
+# Admin logs: system management, security, user operations
+admin_log_buffer = deque(maxlen=1000)
+admin_log_sequence = 0
+
+# User logs: downloads, conversions, file operations
+user_log_buffer = deque(maxlen=1000)
+user_log_sequence = 0
+
+# Legacy buffer maintained temporarily for backwards compatibility
 # Stores last 1000 log entries for quick retrieval by the frontend
 # maxlen=1000 means old logs are automatically dropped when buffer fills
 log_buffer = deque(maxlen=1000)
@@ -436,6 +480,35 @@ log_buffer = deque(maxlen=1000)
 # This never resets, unlike buffer index which wraps at 1000
 # Allows frontend to track logs even after buffer wraparound
 log_sequence = 0
+
+# Component classification for log routing
+# Components are classified into 'admin' or 'user' log streams
+# This allows automatic routing of logs based on their nature
+ADMIN_LOG_COMPONENTS = {
+    "User Management",    # User CRUD operations
+    "Admin",             # Database operations, system config
+    "Settings",          # Admin settings changes
+    "System",            # Startup, shutdown, hardware detection
+    "Security",          # Security events, rate limiting
+    "Auth",              # Login/logout events (legacy)
+    "Authentication"     # Login/logout events (current)
+}
+
+USER_LOG_COMPONENTS = {
+    "Download",          # Download operations
+    "Upload",            # File uploads
+    "Queue",            # Queue operations
+    "YT-DLP",           # yt-dlp output
+    "YT-DLP-ERR",       # yt-dlp errors
+    "API",              # General API calls
+    "Tools",            # Conversion tools
+    "ToolConversion",   # Tool conversions
+    "VideoTransform",   # Video transformations
+    "Thumbnail",        # Thumbnail generation
+    "Cleanup",          # File cleanup
+    "Cookies",          # Cookie file operations
+    "ConversionQueue"   # Conversion queue
+}
 
 # Rate limiting data structures
 from collections import defaultdict
@@ -1119,30 +1192,29 @@ class LogEntry(BaseModel):
 
 async def emit_log(level: str, component: str, message: str, download_id: Optional[str] = None):
     """
-    Emit a log entry to all logging destinations.
-    Logs go to:
-    - In-memory buffer (for frontend display)
-    - Log file (for persistence)
-    This is the central logging function used throughout the application.
+    Emit a log entry to all logging destinations with automatic routing.
+
+    Logs are automatically routed to either admin or user log streams
+    based on the component. This allows existing code to work without
+    changes while providing separate log views.
+
+    Admin logs: User management, database ops, settings, security
+    User logs: Downloads, conversions, file operations
     """
-    global log_sequence
-    log_sequence += 1
+    global admin_log_sequence, user_log_sequence, log_sequence
 
-    # Create a structured log entry
-    log_entry = LogEntry(
-        sequence=log_sequence,  # Unique, incrementing sequence number
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        level=level,
-        component=component,
-        message=message,
-        download_id=download_id
-    )
+    # Determine log type based on component classification
+    is_admin_log = component in ADMIN_LOG_COMPONENTS
+    is_user_log = component in USER_LOG_COMPONENTS
 
-    # Add to in-memory circular buffer
-    # This is what the frontend polls to display logs
-    log_buffer.append(log_entry.model_dump())
+    # Default to user log if component not explicitly classified
+    # This ensures new components don't break logging
+    if not is_admin_log and not is_user_log:
+        is_user_log = True
 
-    # Write to file logger
+    # Create timestamp once for consistency
+    timestamp = datetime.now(timezone.utc).isoformat()
+
     # Map our custom log levels to Python's logging levels
     log_level_map = {
         "DEBUG": logging.DEBUG,
@@ -1159,6 +1231,46 @@ async def emit_log(level: str, component: str, message: str, download_id: Option
     if download_id:
         log_msg = f"[{download_id[:8]}] {message}"
 
+    # Route to admin log
+    if is_admin_log:
+        admin_log_sequence += 1
+        log_entry = LogEntry(
+            sequence=admin_log_sequence,
+            timestamp=timestamp,
+            level=level,
+            component=component,
+            message=message,
+            download_id=download_id
+        )
+        admin_log_buffer.append(log_entry.model_dump())
+        admin_file_logger.log(file_log_level, log_msg, extra={'component': component})
+
+    # Route to user log
+    if is_user_log:
+        user_log_sequence += 1
+        log_entry = LogEntry(
+            sequence=user_log_sequence,
+            timestamp=timestamp,
+            level=level,
+            component=component,
+            message=message,
+            download_id=download_id
+        )
+        user_log_buffer.append(log_entry.model_dump())
+        user_file_logger.log(file_log_level, log_msg, extra={'component': component})
+
+    # Also write to legacy buffer for backwards compatibility
+    # Can be removed once transition is complete
+    log_sequence += 1
+    legacy_entry = LogEntry(
+        sequence=log_sequence,
+        timestamp=timestamp,
+        level=level,
+        component=component,
+        message=message,
+        download_id=download_id
+    )
+    log_buffer.append(legacy_entry.model_dump())
     app_file_logger.log(file_log_level, log_msg, extra={'component': component})
 
     # Debug logging to console for troubleshooting
@@ -1170,15 +1282,19 @@ async def emit_log(level: str, component: str, message: str, download_id: Option
     # Log to console selectively to avoid spam
     # Show first 20 logs to verify logging works, then every 50th log
     if emit_log.call_count <= 20 or emit_log.call_count % 50 == 0:
-        logger.info(f"[LOG #{emit_log.call_count}] {level} | {component} | {message[:100]}")
-        logger.info(f"[LOG] Log sequence: {log_sequence}")
+        log_type = "ADMIN" if is_admin_log else "USER"
+        logger.info(f"[LOG #{emit_log.call_count}] {log_type} | {level} | {component} | {message[:100]}")
+        logger.info(f"[LOG] Sequences - Admin: {admin_log_sequence}, User: {user_log_sequence}")
 
     # Broadcast to WebSocket clients (if any are connected)
     # Note: Currently WebSocket logging is not used, switched to HTTP polling
+    # Send the appropriate log entry based on log type
     disconnected = []
     for ws in log_websockets:
         try:
-            await ws.send_json(log_entry.model_dump())
+            # Send the appropriate log entry (prefer specific over legacy)
+            ws_entry = log_entry if (is_admin_log or is_user_log) else legacy_entry
+            await ws.send_json(ws_entry.model_dump())
         except Exception as e:
             logger.error(f"[LOG] Failed to send to WebSocket: {e}")
             disconnected.append(ws)
@@ -3536,21 +3652,6 @@ async def get_active_sessions(
     }
 
 
-@app.get("/api/admin/test-cors")
-async def test_cors_endpoint():
-    """
-    Test endpoint to verify CORS configuration.
-    Returns current CORS settings and server info.
-    Public endpoint for testing purposes.
-    """
-    admin_settings = get_admin_settings()
-    return {
-        "message": "CORS test successful",
-        "cors_enabled": admin_settings.cors.enabled,
-        "allowed_origins": admin_settings.cors.allowed_origins,
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-
 
 @app.get("/api/admin/settings")
 async def get_admin_settings_ui(
@@ -3722,13 +3823,6 @@ async def favicon():
     """Serve favicon"""
     from fastapi.responses import FileResponse
     return FileResponse("assets/logo.png", media_type="image/png")
-
-
-@app.get("/api/test-log")
-async def test_log():
-    """Test endpoint to generate a log message"""
-    await emit_log("INFO", "System", f"Test log generated at {datetime.now(timezone.utc).isoformat()}")
-    return {"status": "ok", "message": "Test log sent"}
 
 
 @app.post("/api/download", response_model=DownloadResponse)
@@ -4086,27 +4180,61 @@ async def websocket_endpoint(websocket: WebSocket, download_id: str):
             pass  # Already closed
 
 
-@app.post("/api/logs/test")
-async def test_log():
-    """Test endpoint to emit a log message"""
-    await emit_log("INFO", "Test", "🧪 This is a test log message from the API!")
-    return {"message": "Test log emitted", "websocket_clients": len(log_websockets)}
-
-
 @app.get("/api/logs")
 async def get_logs(
+    log_type: Optional[str] = "user",  # "user", "admin", or "both"
     level: Optional[str] = None,
     component: Optional[str] = None,
     download_id: Optional[str] = None,
     since_sequence: Optional[int] = None,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """Get logs with optional filtering and incremental updates"""
-    logs = list(log_buffer)
+    """
+    Get logs with optional filtering and incremental updates.
 
-    # If since_sequence is provided, only return logs after that sequence number
-    if since_sequence is not None:
-        logs = [log for log in logs if log["sequence"] > since_sequence]
+    Args:
+        log_type: Type of logs to retrieve ("user", "admin", "both")
+                  Regular users can only access "user" logs
+                  Admins can access "user", "admin", or "both"
+        level: Filter by log level (INFO, WARNING, ERROR, etc.)
+        component: Filter by component name
+        download_id: Filter by download ID
+        since_sequence: Only return logs after this sequence number
+
+    Returns:
+        Logs with metadata including sequence numbers and buffer sizes
+    """
+    is_admin = current_user.get("is_admin", False)
+
+    # Access control: non-admins can only see user logs
+    if not is_admin and log_type in ["admin", "both"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required to view admin logs"
+        )
+
+    # Default non-admins to user logs
+    if not is_admin:
+        log_type = "user"
+
+    # Collect logs based on log_type
+    logs = []
+    latest_admin_sequence = 0
+    latest_user_sequence = 0
+
+    if log_type in ["admin", "both"]:
+        admin_logs = list(admin_log_buffer)
+        if since_sequence is not None:
+            admin_logs = [log for log in admin_logs if log["sequence"] > since_sequence]
+        logs.extend(admin_logs)
+        latest_admin_sequence = admin_log_buffer[-1]["sequence"] if admin_log_buffer else 0
+
+    if log_type in ["user", "both"]:
+        user_logs = list(user_log_buffer)
+        if since_sequence is not None:
+            user_logs = [log for log in user_logs if log["sequence"] > since_sequence]
+        logs.extend(user_logs)
+        latest_user_sequence = user_log_buffer[-1]["sequence"] if user_log_buffer else 0
 
     # Apply filters
     if level:
@@ -4116,13 +4244,16 @@ async def get_logs(
     if download_id:
         logs = [log for log in logs if log.get("download_id") == download_id]
 
-    # Return logs with the current sequence number
-    latest_sequence = log_buffer[-1]["sequence"] if log_buffer else 0
+    # Sort by timestamp for consistent ordering when viewing "both"
+    logs = sorted(logs, key=lambda x: x["timestamp"])
 
     return {
         "logs": logs,
-        "buffer_size": len(log_buffer),
-        "latest_sequence": latest_sequence
+        "log_type": log_type,
+        "admin_buffer_size": len(admin_log_buffer),
+        "user_buffer_size": len(user_log_buffer),
+        "latest_admin_sequence": latest_admin_sequence,
+        "latest_user_sequence": latest_user_sequence
     }
 
 

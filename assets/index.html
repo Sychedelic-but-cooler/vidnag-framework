@@ -345,6 +345,15 @@
                 </p>
 
                 <div class="logs-controls">
+                    <!-- Log type selector (only shown for admin users) -->
+                    <div class="filter-group" id="log-type-selector-container" style="display: none;">
+                        <label for="log-type-selector">Log Type:</label>
+                        <select id="log-type-selector">
+                            <option value="user">User Logs</option>
+                            <option value="admin">Admin Logs</option>
+                            <option value="both">All Logs</option>
+                        </select>
+                    </div>
                     <div class="filter-group">
                         <label for="log-level-filter">Level:</label>
                         <select id="log-level-filter">
