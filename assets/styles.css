@@ -677,7 +677,8 @@ header h1 {
     -webkit-text-fill-color: transparent;
     background-clip: text;
     margin: 0;
-    line-height: 1;
+    line-height: 1.2;
+    padding: 0.15rem 0;
     display: flex;
     align-items: center;
 }
@@ -708,6 +709,8 @@ header h1 {
 
     header h1 {
         font-size: 2rem;
+        line-height: 1.2;
+        padding: 0.15rem 0;
         justify-content: center;
     }
 }
@@ -2804,6 +2807,8 @@ body[data-theme="light"] .url-domain:hover {
 
     header h1 {
         font-size: 2rem;
+        line-height: 1.2;
+        padding: 0.15rem 0;
     }
 
     .tabs {
