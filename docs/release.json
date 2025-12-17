@@ -1,6 +1,15 @@
 {
-  "current_version": "2.4.4-12",
+  "current_version": "2.5.4-12",
   "releases": [
+    {
+      "version": "2.5.4-12",
+      "date": "2024-12-17",
+      "title": "title": "Download & Queue Visibility System",
+      "highlights": [
+        "Added Download System Public or Private Types",
+        "Removed Global Hover Effects from Top Level Themes"
+      ]
+    },
     {
       "version": "2.4.4-12",
       "date": "2024-12-17",
