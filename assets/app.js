@@ -4062,18 +4062,26 @@ function downloadCompletedConversion(conversionId, filename, toolType, sourceDow
 
     // MP3 conversions have their own endpoint
     if (toolType === 'video_to_mp3') {
-        downloadUrl = `${API_BASE}/api/tools/audio/${conversionId}`;
+        downloadUrl = addTokenToUrl(`${API_BASE}/api/tools/audio/${conversionId}`);
     }
-    // Video transforms modify the original file, so download from video endpoint
+    // Video transforms modify the original file, so download from download endpoint (not video endpoint)
     else if (toolType.startsWith('video_transform_')) {
-        downloadUrl = addTokenToUrl(`${API_BASE}/api/files/video/${sourceDownloadId}`);
+        downloadUrl = addTokenToUrl(`${API_BASE}/api/files/download/${sourceDownloadId}`);
     }
     else {
         // Fallback to audio endpoint for unknown types
-        downloadUrl = `${API_BASE}/api/tools/audio/${conversionId}`;
+        downloadUrl = addTokenToUrl(`${API_BASE}/api/tools/audio/${conversionId}`);
     }
 
-    window.open(downloadUrl, '_blank');
+    // Create hidden link to trigger download instead of opening in new tab
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename || 'download';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
     showToast('Download started', 'success');
 }
 

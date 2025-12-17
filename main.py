@@ -5541,9 +5541,10 @@ async def download_audio(conversion_id: str, current_user: Dict[str, Any] = Depe
                      conversion_id)
 
         from fastapi.responses import FileResponse
+        # Use application/octet-stream to force download instead of playing in browser
         return FileResponse(
             filepath,
-            media_type="audio/mpeg",
+            media_type="application/octet-stream",
             filename=conversion.output_filename
         )
 
