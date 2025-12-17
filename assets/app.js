@@ -1508,6 +1508,56 @@ async function toggleDownloadVisibility(downloadId, event) {
     }
 }
 
+/**
+ * Toggle file visibility between public and private (for File Browser)
+ * @param {string} downloadId - Download ID to toggle
+ * @param {Event} event - Click event
+ */
+async function toggleFileVisibility(downloadId, event) {
+    // Prevent event bubbling
+    event?.stopPropagation();
+
+    const badge = event?.target;
+    if (!badge) return;
+
+    // Store original content
+    const originalContent = badge.innerHTML;
+    const wasPublic = badge.classList.contains('badge-success');
+
+    try {
+        // Show loading state
+        badge.innerHTML = wasPublic ? '🔒 Making private...' : '🌐 Making public...';
+        badge.style.opacity = '0.6';
+
+        const response = await apiFetch(`${API_BASE}/api/downloads/${downloadId}/toggle-visibility`, {
+            method: 'PATCH'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to toggle visibility');
+        }
+
+        const updatedDownload = await response.json();
+
+        // Show success message
+        showToast(
+            `File is now ${updatedDownload.is_public ? 'public' : 'private'}`,
+            'success'
+        );
+
+        // Reload files to update the UI
+        loadFiles();
+
+    } catch (error) {
+        console.error('Failed to toggle file visibility:', error);
+        showToast('Failed to change visibility', 'error');
+
+        // Restore original badge content
+        badge.innerHTML = originalContent;
+        badge.style.opacity = '1';
+    }
+}
+
 async function deleteDownload(downloadId, event) {
     const button = event?.target.closest('button');
 
@@ -3170,12 +3220,54 @@ function renderFiles(files) {
         return;
     }
 
+    // Get current user info for badge display logic
+    const currentUserId = AUTH.getUserId();
+    const isAdmin = AUTH.isAdmin();
+
     container.innerHTML = files.map(file => {
+        // Determine if this is user's own file
+        const isOwnFile = file.user_id === currentUserId;
+        const canToggleVisibility = isAdmin || isOwnFile;
+
+        // Build visibility badge (clickable if owner or admin)
+        let visibilityBadge = '';
+        if (file.is_public) {
+            // Public badge - green/success themed
+            if (canToggleVisibility) {
+                visibilityBadge = `<span class="badge badge-success visibility-toggle"
+                    onclick="toggleFileVisibility('${file.id}', event)"
+                    title="Click to make private">🌐 Public</span>`;
+            } else {
+                visibilityBadge = `<span class="badge badge-success" title="Public file">🌐 Public</span>`;
+            }
+        } else {
+            // Private badge - warning/lock themed
+            if (canToggleVisibility) {
+                visibilityBadge = `<span class="badge badge-warning visibility-toggle"
+                    onclick="toggleFileVisibility('${file.id}', event)"
+                    title="Click to make public">🔒 Private</span>`;
+            } else {
+                visibilityBadge = `<span class="badge badge-warning" title="Private file">🔒 Private</span>`;
+            }
+        }
+
+        // Build ownership badge - use theme colors
+        let ownershipBadge = '';
+        if (file.username) {
+            ownershipBadge = `<span class="badge badge-primary" title="Uploaded/Downloaded by">${escapeHtml(file.username)}</span>`;
+        }
+
         return `
         <div class="file-item" data-download-id="${file.id}">
             <input type="checkbox" class="file-checkbox">
             <div class="file-info">
-                <span class="file-name">${escapeHtml(file.filename)}</span>
+                <div class="file-name-row">
+                    <span class="file-name">${escapeHtml(file.filename)}</span>
+                    <div class="file-badges">
+                        ${visibilityBadge}
+                        ${ownershipBadge}
+                    </div>
+                </div>
                 <span class="file-size">${formatBytes(file.size)}</span>
             </div>
             <div class="file-actions">

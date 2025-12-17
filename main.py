@@ -1376,6 +1376,9 @@ class FileInfo(BaseModel):
     id: str                                  # Download ID for API operations
     filename: str                            # Display filename (user-friendly name)
     size: int                               # File size in bytes
+    user_id: Optional[str] = None            # User who uploaded/downloaded this file
+    username: Optional[str] = None           # Username for display purposes
+    is_public: bool = True                   # Visibility flag
 
 
 class DownloadZipRequest(BaseModel):
@@ -4162,6 +4165,7 @@ async def upload_video(
 
         # Create Download record with status COMPLETED
         # This allows the uploaded file to appear in tools and file lists
+        user_id = current_user.get("sub")
         download = Download(
             url=f"uploaded://{display_filename}",  # Special URL to indicate upload
             filename=display_filename,
@@ -4171,7 +4175,9 @@ async def upload_video(
             file_size=file_size,
             status=DownloadStatus.COMPLETED,
             progress=100.0,
-            completed_at=datetime.now(timezone.utc)
+            completed_at=datetime.now(timezone.utc),
+            user_id=user_id,  # Assign to user who uploaded
+            is_public=True  # Uploads default to public
         )
         db.add(download)
         db.commit()
@@ -5046,24 +5052,50 @@ async def download_file(download_id: str, current_user: Dict[str, Any] = Depends
 
 @app.get("/api/files", response_model=List[FileInfo])
 async def list_files(current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """List all completed downloads with their display filenames and sizes"""
+    """
+    List completed downloads visible to the current user.
+
+    Regular users see: public files + their own private files
+    Admin users see: ALL files
+    """
     try:
-        # Get all completed downloads from database
-        completed_downloads = DatabaseService.get_downloads_by_status(db, DownloadStatus.COMPLETED)
+        user_id = current_user.get("sub")
+        is_admin = current_user.get("is_admin", False)
+
+        # Get completed downloads based on user permissions
+        # Use same SQL-based filtering as /api/downloads for consistency
+        if is_admin:
+            # Admins see everything
+            completed_downloads = DatabaseService.get_downloads_by_status(db, DownloadStatus.COMPLETED)
+        else:
+            # Regular users see: public + own private
+            # Use SQL filtering to ensure proper visibility control
+            completed_downloads = DatabaseService.get_visible_downloads_by_status(
+                db, user_id, DownloadStatus.COMPLETED
+            )
 
         files = []
         for download in completed_downloads:
             if download.filename and download.file_size and download.internal_filename:
+                # Get username for display
+                username = None
+                if download.user_id:
+                    user = db.query(User).filter(User.id == download.user_id).first()
+                    username = user.username if user else "Unknown"
+
                 files.append(FileInfo(
                     id=download.id,
                     filename=download.filename,  # Display name
-                    size=download.file_size
+                    size=download.file_size,
+                    user_id=download.user_id,
+                    username=username,
+                    is_public=download.is_public
                 ))
 
         # Sort by filename alphabetically
         files.sort(key=lambda x: x.filename.lower())
 
-        await emit_log("INFO", "API", f"File list requested, found {len(files)} completed downloads")
+        await emit_log("INFO", "API", f"File list requested, found {len(files)} visible files")
         return files
 
     except Exception as e:
