@@ -112,6 +112,21 @@ const AUTH = {
 };
 
 /**
+ * Helper function to add JWT token to file URLs
+ * Used for img src, video src, and download links that can't send Authorization headers
+ * @param {string} url - File URL
+ * @returns {string} URL with ?token= parameter appended
+ */
+function addTokenToUrl(url) {
+    const token = AUTH.getToken();
+    if (!token) return url;
+
+    // Check if URL already has query parameters
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
+/**
  * Enhanced fetch wrapper with authentication
  * Automatically adds Authorization header with JWT token
  * Handles 401 (unauthorized) and 403 (forbidden) responses
@@ -756,6 +771,8 @@ async function submitDownload(event) {
 
     const urlsText = document.getElementById('video-url').value.trim();
     const cookiesFile = document.getElementById('cookies-file').value || null;
+    const visibility = document.getElementById('download-visibility').value;
+    const isPublic = visibility === 'public';
 
     if (!urlsText) {
         showFormError('video-url', 'Please enter a video URL');
@@ -815,7 +832,8 @@ async function submitDownload(event) {
                     },
                     body: JSON.stringify({
                         url,
-                        cookies_file: cookiesFile
+                        cookies_file: cookiesFile,
+                        is_public: isPublic
                     })
                 });
 
@@ -867,6 +885,7 @@ async function submitDownload(event) {
         // Clear form if at least one succeeded
         if (successCount > 0) {
             document.getElementById('video-url').value = '';
+            document.getElementById('download-visibility').value = 'public';
         }
 
         // Refresh downloads list
@@ -1080,7 +1099,9 @@ async function loadDownloads() {
         const response = await apiFetch(`${API_BASE}/api/downloads`);
         if (!response.ok) throw new Error('Failed to load downloads');
 
-        const downloads = await response.json();
+        const data = await response.json();
+        const downloads = data.downloads || data;  // Support both new and old format
+        const hiddenActiveCount = data.hidden_active_count || 0;
 
         // Filter active downloads (currently in progress or queued)
         const active = downloads.filter(d =>
@@ -1097,8 +1118,8 @@ async function loadDownloads() {
             d.status === 'completed' || d.status === 'failed'
         );
 
-        // Render both lists
-        renderDownloads('active-downloads-list', active);
+        // Render both lists (active list has special privacy handling)
+        renderActiveDownloads('active-downloads-list', active, hiddenActiveCount);
         renderDownloads('past-downloads-list', past);
 
         // Connect WebSockets for active downloads to receive real-time updates
@@ -1115,6 +1136,53 @@ async function loadDownloads() {
 }
 
 /**
+ * Render Active Downloads with Privacy Placeholder
+ * Shows a placeholder card when there are hidden private downloads in the queue
+ */
+function renderActiveDownloads(containerId, downloads, hiddenCount = 0) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    // Show placeholder if there are hidden private downloads
+    if (hiddenCount > 0) {
+        const placeholder = document.createElement('div');
+        placeholder.className = 'download-item private-placeholder';
+        placeholder.innerHTML = `
+            <div class="download-content">
+                <div class="download-header">
+                    <div class="download-url">🔒 Private Content in Queue</div>
+                    <span class="badge badge-secondary">Queued</span>
+                </div>
+                <div class="download-info">
+                    <p style="margin: 0.5rem 0; color: var(--text-muted);">
+                        ${hiddenCount} private download${hiddenCount > 1 ? 's' : ''} from other users ${hiddenCount > 1 ? 'are' : 'is'} currently in the queue.
+                        Your downloads will begin when the queue is free.
+                    </p>
+                </div>
+            </div>
+        `;
+        container.appendChild(placeholder);
+    }
+
+    // Show user's own downloads and public downloads
+    if (downloads.length === 0 && hiddenCount === 0) {
+        container.innerHTML = `
+            <div class="empty-state-enhanced">
+                <span class="empty-icon">📥</span>
+                <h3>No active downloads</h3>
+                <p>Paste a video URL in the form above to get started</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Render visible downloads
+    renderDownloads(containerId, downloads, true);
+}
+
+/**
  * Render Download Cards
  *
  * Generates HTML for a list of downloads and updates the specified container.
@@ -1127,10 +1195,10 @@ async function loadDownloads() {
  *
  * The HTML is dynamically generated based on download status and properties.
  */
-function renderDownloads(containerId, downloads) {
+function renderDownloads(containerId, downloads, append = false) {
     const container = document.getElementById(containerId);
 
-    if (downloads.length === 0) {
+    if (downloads.length === 0 && !append) {
         // Determine which section this is for and show appropriate message
         if (containerId === 'active-downloads-list') {
             container.innerHTML = `
@@ -1152,11 +1220,54 @@ function renderDownloads(containerId, downloads) {
         return;
     }
 
-    container.innerHTML = downloads.map(download => `
+    // If no downloads and we're appending, just return (placeholder already shown)
+    if (downloads.length === 0 && append) {
+        return;
+    }
+
+    // Get current user info for badge display logic
+    const currentUserId = AUTH.getUserId();
+    const isAdmin = AUTH.isAdmin();
+
+    const html = downloads.map(download => {
+        // Determine if this is user's own download
+        const isOwnDownload = download.user_id === currentUserId;
+
+        // Build visibility badge (clickable if owner or admin)
+        const canToggleVisibility = isAdmin || isOwnDownload;
+        let visibilityBadge = '';
+
+        if (download.is_public) {
+            // Public badge - green/success themed
+            if (canToggleVisibility) {
+                visibilityBadge = `<span class="badge badge-success visibility-toggle"
+                    onclick="toggleDownloadVisibility('${download.id}', event)"
+                    title="Click to make private">🌐 Public</span>`;
+            } else {
+                visibilityBadge = `<span class="badge badge-success" title="Public download">🌐 Public</span>`;
+            }
+        } else {
+            // Private badge - warning/lock themed
+            if (canToggleVisibility) {
+                visibilityBadge = `<span class="badge badge-warning visibility-toggle"
+                    onclick="toggleDownloadVisibility('${download.id}', event)"
+                    title="Click to make public">🔒 Private</span>`;
+            } else {
+                visibilityBadge = `<span class="badge badge-warning" title="Private download">🔒 Private</span>`;
+            }
+        }
+
+        // Build ownership badge - use theme colors
+        let ownershipBadge = '';
+        if (download.username) {
+            ownershipBadge = `<span class="badge badge-primary" title="Downloaded by">${escapeHtml(download.username)}</span>`;
+        }
+
+        return `
         <div class="download-item ${download.status === 'completed' && download.thumbnail ? 'with-thumbnail' : ''}" data-id="${download.id}">
             ${download.status === 'completed' && download.thumbnail ? `
                 <div class="download-thumbnail">
-                    <img src="${API_BASE}/api/files/thumbnail/${download.id}"
+                    <img src="${addTokenToUrl(`${API_BASE}/api/files/thumbnail/${download.id}`)}"
                          alt="Video thumbnail"
                          onerror="this.style.display='none'">
                 </div>
@@ -1165,7 +1276,11 @@ function renderDownloads(containerId, downloads) {
             <div class="download-content">
                 <div class="download-header">
                     <div class="download-url">${download.filename ? escapeHtml(download.filename) : escapeHtml(download.url)}</div>
-                    <span class="download-status status-${download.status}">${download.status}</span>
+                    <div class="download-badges">
+                        <span class="download-status status-${download.status}">${download.status}</span>
+                        ${visibilityBadge}
+                        ${ownershipBadge}
+                    </div>
                 </div>
 
                 ${download.status === 'downloading' || download.status === 'processing' || download.status === 'queued' ? `
@@ -1223,7 +1338,16 @@ function renderDownloads(containerId, downloads) {
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
+
+    if (append) {
+        // Append to existing content (for active downloads with placeholder)
+        container.insertAdjacentHTML('beforeend', html);
+    } else {
+        // Replace all content
+        container.innerHTML = html;
+    }
 }
 
 function escapeHtml(text) {
@@ -1334,6 +1458,56 @@ function updateDownloadUI(downloadId, data) {
     }
 }
 
+/**
+ * Toggle download visibility between public and private
+ * @param {string} downloadId - Download ID to toggle
+ * @param {Event} event - Click event
+ */
+async function toggleDownloadVisibility(downloadId, event) {
+    // Prevent event bubbling
+    event?.stopPropagation();
+
+    const badge = event?.target;
+    if (!badge) return;
+
+    // Store original content
+    const originalContent = badge.innerHTML;
+    const wasPublic = badge.classList.contains('badge-success');
+
+    try {
+        // Show loading state
+        badge.innerHTML = wasPublic ? '🔒 Making private...' : '🌐 Making public...';
+        badge.style.opacity = '0.6';
+
+        const response = await apiFetch(`${API_BASE}/api/downloads/${downloadId}/toggle-visibility`, {
+            method: 'PATCH'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to toggle visibility');
+        }
+
+        const updatedDownload = await response.json();
+
+        // Show success message
+        showToast(
+            `Download is now ${updatedDownload.is_public ? 'public' : 'private'}`,
+            'success'
+        );
+
+        // Reload downloads to update the UI
+        loadDownloads();
+
+    } catch (error) {
+        console.error('Failed to toggle visibility:', error);
+        showToast('Failed to change visibility', 'error');
+
+        // Restore original badge content
+        badge.innerHTML = originalContent;
+        badge.style.opacity = '1';
+    }
+}
+
 async function deleteDownload(downloadId, event) {
     const button = event?.target.closest('button');
 
@@ -1419,7 +1593,7 @@ function retryDownload(url) {
 }
 
 function downloadVideo(downloadId, displayName) {
-    window.open(`${API_BASE}/api/files/download/${downloadId}`, '_blank');
+    window.open(addTokenToUrl(`${API_BASE}/api/files/download/${downloadId}`), '_blank');
     showToast('Download started', 'success');
 }
 
@@ -1443,7 +1617,7 @@ function playVideo(downloadId, title) {
                 <button class="video-modal-close" aria-label="Close video player">×</button>
             </div>
             <video controls autoplay style="width: 100%; max-height: 70vh;">
-                <source src="${API_BASE}/api/files/video/${downloadId}">
+                <source src="${addTokenToUrl(`${API_BASE}/api/files/video/${downloadId}`)}">
                 Your browser does not support the video tag.
             </video>
         </div>
@@ -2874,6 +3048,7 @@ function handleUrlInput(event) {
         // If multiple URLs, default to "None" and show feedback
         if (urls.length > 1) {
             cookieSelect.value = '';
+            document.getElementById('download-visibility').value = 'public';
             hint.style.display = 'block';
             hint.className = 'cookie-hint info';
             hint.textContent = `ℹ️ Multiple URLs detected. Cookie selection disabled (downloads will use no cookies).`;
@@ -3799,7 +3974,7 @@ function downloadCompletedConversion(conversionId, filename, toolType, sourceDow
     }
     // Video transforms modify the original file, so download from video endpoint
     else if (toolType.startsWith('video_transform_')) {
-        downloadUrl = `${API_BASE}/api/files/video/${sourceDownloadId}`;
+        downloadUrl = addTokenToUrl(`${API_BASE}/api/files/video/${sourceDownloadId}`);
     }
     else {
         // Fallback to audio endpoint for unknown types

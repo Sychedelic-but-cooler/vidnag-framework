@@ -726,7 +726,6 @@ header h1 {
 }
 
 .glass-card:hover {
-    transform: translateY(-2px);
     box-shadow: 0 12px 40px rgba(var(--primary-color-rgb), 0.2);
     border-color: rgba(var(--primary-color-rgb), 0.3);
 }
@@ -1391,7 +1390,17 @@ section h2 {
 
 .download-item:hover {
     border-color: rgba(var(--primary-color-rgb), 0.3);
-    transform: translateX(4px);
+}
+
+.download-item.private-placeholder {
+    background: rgba(255, 193, 7, 0.1);
+    border-color: rgba(255, 193, 7, 0.3);
+    border-left: 4px solid rgba(255, 193, 7, 0.6);
+}
+
+.download-item.private-placeholder:hover {
+    transform: none;
+    border-color: rgba(255, 193, 7, 0.4);
 }
 
 .download-thumbnail {
@@ -1424,6 +1433,13 @@ section h2 {
     max-width: 100%;
     overflow: hidden;
     gap: 1rem;
+}
+
+.download-badges {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
 }
 
 .download-url {
@@ -1828,7 +1844,6 @@ body[data-theme="light"] .url-domain:hover {
 .tip-item:hover {
     background: rgba(var(--primary-color-rgb), 0.1);
     border-color: rgba(var(--primary-color-rgb), 0.3);
-    transform: translateX(4px);
 }
 
 .tip-content {
@@ -1880,7 +1895,6 @@ body[data-theme="light"] .url-domain:hover {
 .hardware-section:hover {
     background: rgba(255, 255, 255, 0.06);
     border-color: var(--primary-color);
-    transform: translateY(-2px);
 }
 
 .hardware-section h3 {
@@ -3095,7 +3109,6 @@ body[data-theme="light"] .url-domain:hover {
 
 .conversion-item:hover {
     border-color: rgba(var(--primary-color-rgb), 0.3);
-    transform: translateX(4px);
 }
 
 .conversion-info {
@@ -3331,6 +3344,29 @@ body.accessibility-enabled input[type="checkbox"]:focus-visible {
     background: rgba(128, 128, 128, 0.2);
     color: #aaa;
     border: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.badge-warning {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+    border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+/* Clickable visibility toggle badges */
+.visibility-toggle {
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.visibility-toggle:hover {
+    opacity: 0.8;
+    transform: scale(1.05);
+    box-shadow: 0 0 8px rgba(var(--primary-color-rgb), 0.3);
+}
+
+.visibility-toggle:active {
+    transform: scale(0.95);
 }
 
 /* Subsection tabs */

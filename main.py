@@ -43,6 +43,7 @@ import platform
 
 # Application modules
 from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings, JWTKey, AuthAuditLog
+from sqlalchemy import or_, and_
 from settings import settings
 from admin_settings import get_admin_settings
 from security import (
@@ -1313,6 +1314,7 @@ class DownloadRequest(BaseModel):
     """Request body for creating a new download"""
     url: str                                # Video URL to download
     cookies_file: Optional[str] = None      # Optional cookies file for authentication
+    is_public: bool = True                  # Visibility flag (defaults to public)
 
 
 class DownloadResponse(BaseModel):
@@ -1327,9 +1329,18 @@ class DownloadResponse(BaseModel):
     thumbnail: Optional[str]                # Thumbnail filename
     file_size: Optional[int]                # Size in bytes
     error_message: Optional[str]            # Error message if failed
+    user_id: Optional[str] = None           # User who created this download
+    username: Optional[str] = None          # Username for display purposes
+    is_public: bool = True                  # Visibility flag
     created_at: datetime                    # When job was created/queued
     started_at: Optional[datetime]          # When download actually started
     completed_at: Optional[datetime]        # When download finished
+
+
+class DownloadsListResponse(BaseModel):
+    """Response model for list of downloads with privacy info"""
+    downloads: List[DownloadResponse]
+    hidden_active_count: int = 0  # Number of private active downloads from other users
 
 
 class VersionInfo(BaseModel):
@@ -1472,6 +1483,38 @@ class DatabaseService:
         return db.query(Download).filter(Download.status == status).all()
 
     @staticmethod
+    def get_visible_downloads(db: Session, user_id: str) -> List[Download]:
+        """
+        Get downloads visible to a regular user.
+        Returns: public downloads + user's own private downloads
+        """
+        return db.query(Download).filter(
+            or_(
+                Download.is_public == True,
+                Download.user_id == user_id
+            )
+        ).order_by(Download.created_at.desc()).all()
+
+    @staticmethod
+    def get_visible_downloads_by_status(
+        db: Session,
+        user_id: str,
+        status: DownloadStatus
+    ) -> List[Download]:
+        """
+        Get downloads visible to a regular user, filtered by status.
+        """
+        return db.query(Download).filter(
+            and_(
+                Download.status == status,
+                or_(
+                    Download.is_public == True,
+                    Download.user_id == user_id
+                )
+            )
+        ).order_by(Download.created_at.desc()).all()
+
+    @staticmethod
     def get_failed_downloads_older_than(db: Session, days: int) -> List[Download]:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         return db.query(Download).filter(
@@ -1480,8 +1523,19 @@ class DatabaseService:
         ).all()
 
     @staticmethod
-    def create_download(db: Session, url: str, cookies_file: Optional[str] = None) -> Download:
-        download = Download(url=url, cookies_file=cookies_file)
+    def create_download(
+        db: Session,
+        url: str,
+        cookies_file: Optional[str] = None,
+        user_id: Optional[str] = None,
+        is_public: bool = True
+    ) -> Download:
+        download = Download(
+            url=url,
+            cookies_file=cookies_file,
+            user_id=user_id,
+            is_public=is_public
+        )
         db.add(download)
         db.commit()
         db.refresh(download)
@@ -2393,6 +2447,59 @@ async def global_exception_handler(request: Request, exc: Exception):
 security = HTTPBearer(auto_error=False)
 
 
+async def get_current_user_optional(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    token: Optional[str] = None,  # Query parameter token
+    db: Session = Depends(get_db_session)
+) -> Dict[str, Any]:
+    """
+    Optional authentication dependency for file endpoints.
+
+    - Checks Authorization header first, then ?token= query parameter
+    - If JWT token is present and valid, returns authenticated user
+    - If no token or invalid token, raises 401 (all users must be authenticated)
+    """
+    # Try to load admin settings
+    admin_settings = None
+    try:
+        admin_settings = get_admin_settings()
+        if hasattr(admin_settings, 'auth') and hasattr(admin_settings.auth, 'enabled'):
+            if admin_settings.auth.enabled is False:
+                # Auth disabled - return system user
+                return {"sub": "system", "username": "system", "is_admin": True}
+    except Exception:
+        pass
+
+    # Try Authorization header first
+    token_string = None
+    if credentials:
+        token_string = credentials.credentials
+    elif token:
+        # Fall back to query parameter
+        token_string = token
+
+    # If we have a token, try to validate it
+    if token_string and admin_settings:
+        try:
+            payload = JWTService.decode_token(token_string, db, admin_settings)
+            if payload:
+                # Check if user still exists and is not disabled
+                user = db.query(User).filter(User.id == payload["sub"]).first()
+                if user and not user.is_disabled:
+                    return payload
+        except Exception:
+            # Token validation failed
+            pass
+
+    # No valid credentials - require authentication
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated - token required in Authorization header or ?token= parameter",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
@@ -2684,6 +2791,82 @@ async def refresh_token(
         username=user.username,
         is_admin=user.is_admin
     )
+
+
+# Helper functions for download visibility and access control
+
+def enrich_download_with_user(db: Session, download: Download) -> DownloadResponse:
+    """
+    Add username to download response for display purposes.
+
+    Args:
+        db: Database session
+        download: Download ORM object
+
+    Returns:
+        DownloadResponse with username populated
+    """
+    username = None
+    if download.user_id:
+        user = db.query(User).filter(User.id == download.user_id).first()
+        username = user.username if user else "Unknown"
+
+    return DownloadResponse(
+        id=download.id,
+        url=download.url,
+        status=download.status,
+        progress=download.progress,
+        filename=download.filename,
+        thumbnail=download.thumbnail,
+        file_size=download.file_size,
+        error_message=download.error_message,
+        user_id=download.user_id,
+        username=username,
+        is_public=download.is_public,
+        created_at=download.created_at,
+        started_at=download.started_at,
+        completed_at=download.completed_at
+    )
+
+
+def verify_download_access(
+    download: Download,
+    current_user: Dict[str, Any]
+) -> bool:
+    """
+    Verify user has access to download.
+
+    Returns True if:
+    - Download is public (anyone can access)
+    - User is admin (can access all downloads)
+    - Download belongs to authenticated user (owner access)
+
+    Args:
+        download: Download ORM object
+        current_user: Current user from JWT token (may be "public" for unauthenticated)
+
+    Returns:
+        True if user has access, False otherwise
+    """
+    is_admin = current_user.get("is_admin", False)
+    user_id = current_user.get("sub")
+
+    # Public downloads are accessible to everyone
+    if download.is_public:
+        return True
+
+    # From here on, download is private - only authenticated users with ownership or admin can access
+
+    # Admin users can access all downloads
+    if is_admin:
+        return True
+
+    # Owner can access their own private downloads
+    if download.user_id == user_id:
+        return True
+
+    # Deny access to other users' private downloads
+    return False
 
 
 @app.get("/api/auth/me", response_model=UserInfoResponse)
@@ -3853,7 +4036,17 @@ async def start_download(request: DownloadRequest, http_request: Request, curren
     safe_url = sanitize_url_for_logging(request.url)
     await emit_log("INFO", "API", f"New download request from {client_ip} for URL: {safe_url}")
 
-    download = DatabaseService.create_download(db, request.url, request.cookies_file)
+    # Extract user ID from authenticated user
+    user_id = current_user.get("sub")
+
+    # Create download with user association and visibility setting
+    download = DatabaseService.create_download(
+        db,
+        request.url,
+        request.cookies_file,
+        user_id=user_id,
+        is_public=request.is_public
+    )
 
     await emit_log("INFO", "API", f"Download created with ID: {download.id}", download.id)
 
@@ -3864,7 +4057,7 @@ async def start_download(request: DownloadRequest, http_request: Request, curren
         request.cookies_file
     )
 
-    return download
+    return enrich_download_with_user(db, download)
 
 
 @app.post("/api/upload", response_model=DownloadResponse)
@@ -4008,19 +4201,61 @@ async def upload_video(
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
-@app.get("/api/downloads", response_model=List[DownloadResponse])
+@app.get("/api/downloads", response_model=DownloadsListResponse)
 async def get_downloads(status: Optional[str] = None, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """Get all downloads, optionally filtered by status"""
-    if status:
-        try:
-            status_enum = DownloadStatus(status)
-            downloads = DatabaseService.get_downloads_by_status(db, status_enum)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid status")
-    else:
-        downloads = DatabaseService.get_all_downloads(db)
+    """
+    Get downloads visible to the current user.
 
-    return downloads
+    Regular users see: public downloads + their own private downloads
+    Admin users see: ALL downloads
+
+    Returns: Downloads list plus count of hidden private active downloads
+    """
+    user_id = current_user.get("sub")
+    is_admin = current_user.get("is_admin", False)
+
+    if is_admin:
+        # Admins see everything - no hidden downloads
+        if status:
+            try:
+                status_enum = DownloadStatus(status)
+                downloads = DatabaseService.get_downloads_by_status(db, status_enum)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid status")
+        else:
+            downloads = DatabaseService.get_all_downloads(db)
+
+        hidden_active_count = 0
+    else:
+        # Regular users see: public + own private
+        if status:
+            try:
+                status_enum = DownloadStatus(status)
+                downloads = DatabaseService.get_visible_downloads_by_status(
+                    db, user_id, status_enum
+                )
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid status")
+        else:
+            downloads = DatabaseService.get_visible_downloads(db, user_id)
+
+        # Count hidden private active downloads from other users
+        # Active statuses: queued, downloading, processing
+        all_active = db.query(Download).filter(
+            Download.status.in_([DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING])
+        ).all()
+
+        visible_active_ids = {d.id for d in downloads if d.status in ['queued', 'downloading', 'processing']}
+        all_active_ids = {d.id for d in all_active}
+        hidden_active_count = len(all_active_ids - visible_active_ids)
+
+    # Enrich with username for display
+    enriched_downloads = [enrich_download_with_user(db, d) for d in downloads]
+
+    return DownloadsListResponse(
+        downloads=enriched_downloads,
+        hidden_active_count=hidden_active_count
+    )
 
 
 @app.get("/api/downloads/{download_id}", response_model=DownloadResponse)
@@ -4030,6 +4265,45 @@ async def get_download(download_id: str, current_user: Dict[str, Any] = Depends(
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
     return download
+
+
+@app.patch("/api/downloads/{download_id}/toggle-visibility", response_model=DownloadResponse)
+async def toggle_download_visibility(
+    download_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Toggle download visibility between public and private.
+    Only the owner or admin can toggle visibility.
+    """
+    download = DatabaseService.get_download_by_id(db, download_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+
+    user_id = current_user.get("sub")
+    is_admin = current_user.get("is_admin", False)
+
+    # Only owner or admin can toggle visibility
+    if not is_admin and download.user_id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only change visibility of your own downloads"
+        )
+
+    # Toggle visibility
+    download.is_public = not download.is_public
+    db.commit()
+    db.refresh(download)
+
+    visibility = "public" if download.is_public else "private"
+    await emit_log(
+        "INFO", "API",
+        f"Download {download_id} visibility changed to {visibility}",
+        download_id
+    )
+
+    return enrich_download_with_user(db, download)
 
 
 @app.delete("/api/downloads/{download_id}")
@@ -4658,12 +4932,19 @@ async def delete_cookie_file(filename: str, http_request: Request = None, curren
 
 
 @app.get("/api/files/thumbnail/{download_id}")
-async def get_thumbnail(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
+async def get_thumbnail(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
     """Serve thumbnail images using download ID"""
     # Look up the download record to get internal_thumbnail filename
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
+
+    # Verify access to private downloads
+    if not verify_download_access(download, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied to private download"
+        )
 
     if not download.internal_thumbnail:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
@@ -4693,12 +4974,19 @@ async def get_thumbnail(download_id: str, current_user: Dict[str, Any] = Depends
 
 
 @app.get("/api/files/video/{download_id}")
-async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
+async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
     """Serve video files for streaming/playing in browser using download ID"""
     # Look up the download record to get internal_filename
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
+
+    # Verify access to private downloads
+    if not verify_download_access(download, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied to private download"
+        )
 
     if not download.internal_filename:
         raise HTTPException(status_code=404, detail="Video file not found")
@@ -4729,12 +5017,19 @@ async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get
 
 
 @app.get("/api/files/download/{download_id}")
-async def download_file(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
+async def download_file(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
     """Download video file using download ID"""
     # Look up the download record to get internal_filename and display filename
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
+
+    # Verify access to private downloads
+    if not verify_download_access(download, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied to private download"
+        )
 
     if not download.internal_filename:
         raise HTTPException(status_code=404, detail="File not found")
@@ -4860,7 +5155,7 @@ async def calculate_zip_size(request: DownloadZipRequest, current_user: Dict[str
 
 
 @app.post("/api/files/download-zip")
-async def download_files_as_zip(request: DownloadZipRequest, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
+async def download_files_as_zip(request: DownloadZipRequest, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
     """Create and stream a ZIP file containing selected files using download IDs"""
     try:
         if not request.download_ids:
@@ -4873,6 +5168,11 @@ async def download_files_as_zip(request: DownloadZipRequest, current_user: Dict[
         for download_id in request.download_ids:
             download = DatabaseService.get_download_by_id(db, download_id)
             if download and download.internal_filename and download.filename:
+                # Verify access to private downloads
+                if not verify_download_access(download, current_user):
+                    await emit_log("WARNING", "API", f"Access denied to private download {download_id}")
+                    continue  # Skip downloads user doesn't have access to
+
                 downloads_map[download_id] = {
                     'internal_filename': download.internal_filename,
                     'display_filename': download.filename

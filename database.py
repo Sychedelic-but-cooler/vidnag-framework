@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, Enum, Boolean, event
+from sqlalchemy import create_engine, Column, String, Float, Integer, DateTime, Enum, Boolean, event, ForeignKey, or_, and_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
@@ -116,6 +116,11 @@ class Download(Base):
     file_size = Column(Integer, nullable=True)
     error_message = Column(String, nullable=True)
     cookies_file = Column(String, nullable=True)
+
+    # User ownership and visibility
+    user_id = Column(String, ForeignKey('users.id'), nullable=True, index=True)
+    is_public = Column(Boolean, default=True, nullable=False, index=True)
+
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     started_at = Column(UTCDateTime, nullable=True)  # When download actually started (not when queued)
     completed_at = Column(UTCDateTime, nullable=True)
