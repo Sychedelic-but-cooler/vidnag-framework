@@ -4300,11 +4300,11 @@ function createUserRow(user) {
 
     row.innerHTML = `
         <td><strong>${safeUsername}</strong></td>
+        <td>${escapeHtml(user.oidc_email || '')}</td>
         <td>${authTypeBadge}</td>
         <td>${statusBadge}</td>
         <td>${roleBadge}</td>
         <td>${lastLogin}</td>
-        <td>${created}</td>
         <td class="actions-cell">
             <button class="btn btn-small btn-secondary edit-user-btn"
                     data-user-id="${user.id}" ${isSelf ? 'disabled title="Cannot edit yourself"' : ''}>
@@ -4335,6 +4335,21 @@ function openCreateUserModal() {
     form.reset();
     document.getElementById('user-form-id').value = '';
     disabledGroup.style.display = 'none';
+
+    // Clear read-only/display fields
+    const emailEl = document.getElementById('user-form-email');
+    const authTypeEl = document.getElementById('user-form-auth-type');
+    const idDisplay = document.getElementById('user-form-id-display');
+    const createdDisplay = document.getElementById('user-form-created');
+    const lastLoginDisplay = document.getElementById('user-form-last-login');
+    const oidcProviderEl = document.getElementById('user-form-oidc-provider');
+
+    if (emailEl) emailEl.value = '';
+    if (authTypeEl) authTypeEl.textContent = 'Local';
+    if (idDisplay) idDisplay.textContent = '';
+    if (createdDisplay) createdDisplay.textContent = '';
+    if (lastLoginDisplay) lastLoginDisplay.textContent = '';
+    if (oidcProviderEl) oidcProviderEl.textContent = '';
 
     // Enable username field
     if (usernameInput) {
@@ -4379,6 +4394,21 @@ async function openEditUserModal(userId) {
         document.getElementById('user-form-username').value = user.username;
         document.getElementById('user-form-is-admin').checked = user.is_admin;
         document.getElementById('user-form-is-disabled').checked = user.is_disabled;
+
+        // Populate read-only/display fields
+        const emailEl = document.getElementById('user-form-email');
+        const authTypeEl = document.getElementById('user-form-auth-type');
+        const idDisplay = document.getElementById('user-form-id-display');
+        const createdDisplay = document.getElementById('user-form-created');
+        const lastLoginDisplay = document.getElementById('user-form-last-login');
+        const oidcProviderEl = document.getElementById('user-form-oidc-provider');
+
+        if (emailEl) emailEl.value = user.oidc_email || '';
+        if (authTypeEl) authTypeEl.textContent = user.oidc_provider ? `SSO: ${user.oidc_provider}` : 'Local';
+        if (idDisplay) idDisplay.textContent = user.id;
+        if (createdDisplay) createdDisplay.textContent = user.created_at ? new Date(user.created_at).toLocaleString() : '';
+        if (lastLoginDisplay) lastLoginDisplay.textContent = user.last_login ? new Date(user.last_login).toLocaleString() : 'Never';
+        if (oidcProviderEl) oidcProviderEl.textContent = user.oidc_provider || '';
 
         // Disable username field (cannot change username)
         if (usernameInput) {
@@ -6031,6 +6061,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Initialize preferences first
     initPreferences();
+
+    // Load admin settings early so forms and tabs are populated on startup
+    await loadAdminSettings();
 
     // Initialize tabs
     initTabs();

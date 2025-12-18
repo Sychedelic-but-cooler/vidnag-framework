@@ -478,11 +478,11 @@
                         <thead>
                             <tr>
                                 <th>Username</th>
+                                <th>Email</th>
                                 <th>Auth Type</th>
                                 <th>Status</th>
                                 <th>Role</th>
                                 <th>Last Login</th>
-                                <th>Created</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -1131,6 +1131,37 @@
                                pattern="[a-zA-Z0-9_]{3,32}"
                                title="3-32 characters, alphanumeric and underscores only">
                         <small>3-32 characters, alphanumeric and underscores only</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="user-form-email">Email</label>
+                        <input type="text" id="user-form-email" disabled>
+                        <small>Email provided by OIDC provider (if any)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Auth Type</label>
+                        <div id="user-form-auth-type" class="readonly-field">Local</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>User ID</label>
+                        <div id="user-form-id-display" class="readonly-field"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Created</label>
+                        <div id="user-form-created" class="readonly-field"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Last Login</label>
+                        <div id="user-form-last-login" class="readonly-field"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>OIDC Provider</label>
+                        <div id="user-form-oidc-provider" class="readonly-field"></div>
                     </div>
 
                     <div class="form-group">
