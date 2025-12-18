@@ -7,6 +7,15 @@
 
 const API_BASE = window.location.origin;
 const WS_BASE = API_BASE.replace('http', 'ws');
+// Simple debug logger: will be initialized from admin settings at runtime
+let DEBUG_LOGS = false;
+function debugLog(...args) {
+    if (DEBUG_LOGS) {
+        console.log(...args);
+    }
+}
+
+// (removed noisy console filtering — using native console behavior)
 
 // WebSocket tracking (available but HTTP polling is default for compatibility)
 const activeWebSockets = new Map();
@@ -212,7 +221,7 @@ async function checkAuth() {
         // Only allow access if we get explicit confirmation that auth is disabled
         if (statusData.auth_enabled === false) {
             // Authentication is explicitly disabled - allow access
-            console.log('Authentication is disabled');
+            debugLog('Authentication is disabled');
             // Hide logout button when auth is disabled
             const logoutBtn = document.getElementById('logout-btn');
             if (logoutBtn) {
@@ -231,7 +240,7 @@ async function checkAuth() {
         const token = AUTH.getToken();
         if (!token) {
             // No token - redirect to login
-            console.log('No auth token found - redirecting to login');
+            debugLog('No auth token found - redirecting to login');
             window.location.href = '/assets/login.html';
             return;
         }
@@ -240,7 +249,7 @@ async function checkAuth() {
         const response = await apiFetch('/api/auth/me');
         if (!response.ok) {
             // Token invalid - redirect to login
-            console.log('Invalid token - redirecting to login');
+            debugLog('Invalid token - redirecting to login');
             AUTH.clearAuth();
             window.location.href = '/assets/login.html';
             return;
@@ -1984,7 +1993,7 @@ async function loadHardwareInfo() {
         if (cachedData) {
             const data = JSON.parse(cachedData);
             renderHardwareInfo(data);
-            console.log('Hardware info loaded from browser cache');
+            debugLog('Hardware info loaded from browser cache');
             return;
         }
     } catch (error) {
@@ -2589,7 +2598,7 @@ async function loadCookieFiles() {
             });
         }
     } catch (error) {
-        console.log('No cookies endpoint available');
+        debugLog('No cookies endpoint available');
     }
 }
 
@@ -2662,7 +2671,7 @@ function filterLogs() {
     const componentFilter = document.getElementById('log-component-filter').value;
     const downloadIdFilter = document.getElementById('log-download-filter').value.trim();
 
-    console.log(`🔍 Filtering logs: Total=${allLogs.length}, Level='${levelFilter}', Component='${componentFilter}', DownloadID='${downloadIdFilter}'`);
+    debugLog(`🔍 Filtering logs: Total=${allLogs.length}, Level='${levelFilter}', Component='${componentFilter}', DownloadID='${downloadIdFilter}'`);
 
     // Component consolidation mapping
     const componentMapping = {
@@ -2693,7 +2702,7 @@ function filterLogs() {
         filtered = filtered.filter(log => log.download_id && log.download_id.includes(downloadIdFilter));
     }
 
-    console.log(`✅ After filtering: ${filtered.length} logs to display`);
+    debugLog(`✅ After filtering: ${filtered.length} logs to display`);
     displayLogs(filtered);
 }
 
@@ -2765,7 +2774,7 @@ async function pollLogs() {
         pollLogs.callCount++;
 
         if (pollLogs.callCount <= 10 || data.logs.length > 0) {
-            console.log(`📨 Poll #${pollLogs.callCount}: Received ${data.logs.length} new ${data.log_type} logs`);
+            debugLog(`📨 Poll #${pollLogs.callCount}: Received ${data.logs.length} new ${data.log_type} logs`);
         }
 
         // Update sequences based on response
@@ -2801,7 +2810,7 @@ async function pollLogs() {
 
 function startLogsPolling() {
     if (logsPollingInterval) {
-        console.log('⚠️  Logs polling already running');
+        debugLog('⚠️  Logs polling already running');
         return;
     }
 
@@ -2847,7 +2856,7 @@ function initializeLogControls() {
             const logTypeSelector = document.getElementById('log-type-selector');
             logTypeSelector.addEventListener('change', async (e) => {
                 currentLogType = e.target.value;
-                console.log(`📊 Switching to ${currentLogType} logs`);
+                debugLog(`📊 Switching to ${currentLogType} logs`);
 
                 // Clear existing logs and reset sequences
                 allLogs = [];
@@ -5376,6 +5385,16 @@ async function loadAdminSettings() {
 
         currentAdminSettings = await response.json();
 
+        // Initialize client-side debug flag from admin settings
+        try {
+            if (currentAdminSettings && currentAdminSettings.security && typeof currentAdminSettings.security.debug_logs !== 'undefined') {
+                DEBUG_LOGS = !!currentAdminSettings.security.debug_logs;
+                debugLog('DEBUG_LOGS set to', DEBUG_LOGS);
+            }
+        } catch (e) {
+            console.error('Failed to initialize DEBUG_LOGS from admin settings:', e);
+        }
+
         // Load security config tab if visible
         const securityConfigForm = document.getElementById('security-config-form');
         if (securityConfigForm) {
@@ -5465,6 +5484,14 @@ async function loadAppConfigForm() {
         console.log('Set debug_proxy_headers checkbox to:', currentAdminSettings.security.debug_proxy_headers);
     } else {
         console.warn('debug-proxy-headers element not found');
+    }
+
+    const debugLogsCheckbox = document.getElementById('debug-logs');
+    if (debugLogsCheckbox) {
+        debugLogsCheckbox.checked = !!currentAdminSettings.security.debug_logs;
+        debugLog('Set debug_logs checkbox to:', currentAdminSettings.security.debug_logs);
+    } else {
+        console.warn('debug-logs element not found');
     }
 
     // Load queue settings from settings.json
@@ -5964,6 +5991,10 @@ async function saveAppConfigSettings(e) {
 
     currentAdminSettings.security.allow_ytdlp_update = allowYtdlpUpdate.checked;
     currentAdminSettings.security.debug_proxy_headers = debugProxyHeaders.checked;
+    const debugLogsCheckbox = document.getElementById('debug-logs');
+    if (debugLogsCheckbox) {
+        currentAdminSettings.security.debug_logs = debugLogsCheckbox.checked;
+    }
 
     try {
         // Save admin settings (security)
@@ -6425,13 +6456,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadCookieFiles();
 
     // Start logs polling on page load
-    console.log('='.repeat(60));
     console.log('🚀 INITIALIZING LOGS SYSTEM (HTTP Polling)');
-    console.log('='.repeat(60));
     console.log('🌐 API Base:', API_BASE);
-    console.log('📍 Logs endpoint:', `${API_BASE}/api/logs`);
-    console.log('⏱️  Poll interval: 5 seconds');
-    console.log('='.repeat(60));
     startLogsPolling();
 
     // Auto-refresh downloads every 10 seconds

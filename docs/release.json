@@ -1,15 +1,19 @@
 {
-  "current_version": "2.6.32-12",
+  "current_version": "2.6.35-12",
   "releases": [
     {
-      "version": "2.6.32-12",
+      "version": "2.6.35-12",
       "date": "2024-12-18",
       "title": "Code Cleanup & Git Cleanup",
       "highlights": [
         "Remember kids, don't commit Keys or Secrets to Git",
         "Cleaned up Code Comments in Initiazliation Files",
         "Converted all Settings Files to use Environment Variables",
-        "Updated some Default Settings to use more reasonable values"
+        "Updated some Default Settings to use more reasonable values",
+        "Fixed a bug that logged unnecessary content to console",
+        "Fixed a bug that caused some files to not be found during initialization",
+        "Added Control for File Names in the Initialization Process",
+        "Added the ability to rename the database"
       ]
     },
     {

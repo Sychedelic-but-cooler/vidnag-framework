@@ -46,6 +46,7 @@ DEFAULT_ADMIN_SETTINGS = {
     },
     "security": {
         "debug_proxy_headers": False,  # Disable header logging in production, useful when setting up proxies
+        "debug_logs": False,  # Enable verbose client-side debug logging in the frontend when true
         "validate_ip_format": True, # Validate that IPs in headers are well-formed, defaults to True for security
         "allow_ytdlp_update": False,  # Disable yt-dlp updates by default for security
     },
@@ -105,6 +106,7 @@ class RateLimitConfig:
 class SecurityConfig:
     # General Securitry Configuration
     debug_proxy_headers: bool
+    debug_logs: bool
     validate_ip_format: bool
     allow_ytdlp_update: bool
 

@@ -61,7 +61,7 @@ from oidc_auth import OIDCService
 from config import DATABASE_FILE
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.6.32-12"
+APP_VERSION = "2.6.35-12"
 
 def cleanup_old_logs():
     """
@@ -4432,6 +4432,7 @@ async def get_admin_settings_ui(
         },
         "security": {
             "debug_proxy_headers": admin_settings.security.debug_proxy_headers,
+            "debug_logs": admin_settings.security.debug_logs,
             "validate_ip_format": admin_settings.security.validate_ip_format,
             "allow_ytdlp_update": admin_settings.security.allow_ytdlp_update
         },
