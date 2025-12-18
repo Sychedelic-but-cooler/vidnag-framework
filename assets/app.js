@@ -4608,8 +4608,8 @@ function initSubsectionTabs() {
 
         newButton.addEventListener('click', () => {
             const subsectionName = newButton.dataset.subsection;
-            console.log(`Tab clicked: ${subsectionName}`, { button: newButton, container: tabsContainer });
             const tabsContainer = newButton.closest('.subsection-tabs');
+            console.log(`Tab clicked: ${subsectionName}`, { button: newButton, container: tabsContainer });
             
             if (!tabsContainer) return;
 
