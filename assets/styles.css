@@ -3477,14 +3477,70 @@ body.accessibility-enabled input[type="checkbox"]:focus-visible {
     backdrop-filter: blur(20px);
     border: 1px solid var(--glass-border);
     border-radius: 16px;
-    max-width: 500px;
-    width: 90%;
+    /* Wider modal on desktop: use 50% of viewport width, capped */
+    width: 50%;
+    max-width: 900px;
+    min-width: 360px;
     max-height: 90vh;
     overflow-y: auto;
 }
 
 .modal-small {
     max-width: 400px;
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 900px) {
+    .modal-content {
+        width: 80%;
+        max-width: 720px;
+        min-width: unset;
+        margin: 0 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .modal-content {
+        width: 95%;
+        max-width: 95%;
+        border-radius: 12px;
+        padding: 0;
+    }
+    .modal-body,
+    .modal-header,
+    .modal-footer {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+}
+
+/* Two-column form layout for modal forms on large screens */
+@media (min-width: 1100px) {
+    .modal-body form {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem 1.25rem;
+        align-items: start;
+    }
+
+    .modal-body form .form-group {
+        margin: 0;
+    }
+
+    /* Allow specific groups to span full width */
+    .modal-body form .form-group.full-width,
+    .modal-body form .modal-footer {
+        grid-column: 1 / -1;
+    }
+
+    /* Ensure readonly field blocks render nicely in grid items */
+    .readonly-field {
+        padding: 0.5rem 0.6rem;
+        background: rgba(255,255,255,0.02);
+        border: 1px solid var(--glass-border);
+        border-radius: 8px;
+        min-height: 34px;
+    }
 }
 
 .modal-header {
