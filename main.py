@@ -45,8 +45,8 @@ import httpx
 # Application modules
 from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings, JWTKey, AuthAuditLog, OIDCAuthState
 from sqlalchemy import or_, and_
-from settings import settings
-from admin_settings import get_admin_settings
+from settings import settings, SETTINGS_FILE
+from admin_settings import get_admin_settings, ADMIN_SETTINGS_FILE
 from security import (
     is_safe_path,
     validate_filename,
@@ -125,7 +125,7 @@ def set_directory_permissions():
                     logger.warning(f"Could not set permissions on {dir_path}: {e}")
 
         # Private files: 600 (owner rw only)
-        for file_path in ["data.db", "admin_settings.json"]:
+        for file_path in ["data.db", ADMIN_SETTINGS_FILE]:
             if os.path.exists(file_path):
                 try:
                     os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
@@ -4663,11 +4663,11 @@ async def update_admin_settings_ui(
 
     try:
         # Load current settings file
-        settings_file = Path("admin_settings.json")
+        settings_file = Path(ADMIN_SETTINGS_FILE)
         if not settings_file.exists():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="admin_settings.json not found"
+                detail=f"{ADMIN_SETTINGS_FILE} not found"
             )
 
         with open(settings_file, 'r') as f:

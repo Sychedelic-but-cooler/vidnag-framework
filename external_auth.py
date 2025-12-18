@@ -54,7 +54,7 @@ class OIDCConfig:
 
 class ExternalAuthConfig:
     # Initialize settings by loading from disk or using default
-    def __init__(self, config_file: str = "external_auth.json"):
+    def __init__(self, config_file: str = EXTERNAL_AUTH_FILE):
         self.config_file = config_file
         self._config = self._load_config()
         self.oidc = self._parse_oidc_config()
@@ -62,7 +62,7 @@ class ExternalAuthConfig:
     def _load_config(self) -> dict:
         # Loads settings if file exists and is readable
         if not os.path.exists(self.config_file):
-            print(f"external_auth.json not found, creating with defaults...")
+            print(f"{self.config_file} not found, creating with defaults...")
             self._create_default_config()
             return DEFAULT_EXTERNAL_AUTH_CONFIG.copy()
         try:
@@ -71,11 +71,11 @@ class ExternalAuthConfig:
                 # Merge with defaults - any missing keys get default values - this allows backwards compatibility
                 return self._merge_with_defaults(config)
         except json.JSONDecodeError as e:
-            print(f"Error parsing external_auth.json: {e}")
+            print(f"Error parsing {self.config_file}: {e}")
             print("Using default configuration")
             return DEFAULT_EXTERNAL_AUTH_CONFIG.copy()
         except Exception as e:
-            print(f"Error loading external_auth.json: {e}")
+            print(f"Error loading {self.config_file}: {e}")
             print("Using default configuration")
             return DEFAULT_EXTERNAL_AUTH_CONFIG.copy()
 

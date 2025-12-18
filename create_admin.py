@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 # Import database and authentication modules
 from database import init_db, get_db
+from admin_settings import ADMIN_SETTINGS_FILE
 from auth import PasswordService, AuditLogService
 
 
@@ -198,7 +199,7 @@ def create_admin_user():
             print()
             print("You can now login at: http://your-server/assets/login.html")
             print()
-            print("IMPORTANT: Enable authentication in admin_settings.json:")
+            print(f"IMPORTANT: Enable authentication in {ADMIN_SETTINGS_FILE}:")
             print('  Set "auth": { "enabled": true }')
             print()
 
