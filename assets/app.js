@@ -4583,25 +4583,20 @@ async function loadAdminSettingsTab() {
     // Initialize subsection tabs
     initSubsectionTabs();
 
-    // Load admin settings and populate the active form
+    // Load all admin settings upfront so everything is ready
     await loadAdminSettings();
+    
+    // Preload all app management settings so they're available when user clicks any tab
+    await loadAllAppManagementSettings();
+    
+    // Load hardware info for System Info subsection
+    loadHardwareInfo();
 
-    // Find the active subsection and load its data
-    const activeTab = document.querySelector('.subsection-tab.active');
-    if (activeTab) {
-        const subsectionName = activeTab.dataset.subsection;
-        if (subsectionName === 'app-config') {
-            await loadAppConfigForm();
-        } else if (subsectionName === 'authentication') {
-            loadAuthenticationForm();
-        } else if (subsectionName === 'security-config') {
-            loadSecurityConfigForm();
-        }
-    }
+    console.log('Admin settings tab fully loaded');
 }
 
 /**
- * Initialize subsection tabs (for System & Security Management)
+ * Initialize subsection tabs (for System & App Management)
  */
 function initSubsectionTabs() {
     const subsectionButtons = document.querySelectorAll('.subsection-tab');
@@ -4613,21 +4608,27 @@ function initSubsectionTabs() {
 
         newButton.addEventListener('click', () => {
             const subsectionName = newButton.dataset.subsection;
-            const parentSection = newButton.closest('section');
+            const tabsContainer = newButton.closest('.subsection-tabs');
+            
+            if (!tabsContainer) return;
 
-            // Remove active from all tabs in this section
-            parentSection.querySelectorAll('.subsection-tab').forEach(btn => {
+            // Get the parent container - could be a section or a subsection-content div
+            const parentContainer = tabsContainer.closest('section') || tabsContainer.closest('.subsection-content');
+            if (!parentContainer) return;
+
+            // Remove active from all tabs in this tab group
+            tabsContainer.querySelectorAll('.subsection-tab').forEach(btn => {
                 btn.classList.remove('active');
             });
             newButton.classList.add('active');
 
-            // Hide all subsections in this section
-            parentSection.querySelectorAll('.subsection-content').forEach(content => {
+            // Hide all subsections in this parent container
+            parentContainer.querySelectorAll('.subsection-content').forEach(content => {
                 content.classList.remove('active');
             });
 
             // Show target subsection
-            const targetSubsection = parentSection.querySelector(`#${subsectionName}-subsection`);
+            const targetSubsection = parentContainer.querySelector(`#${subsectionName}-subsection`);
             if (targetSubsection) {
                 targetSubsection.classList.add('active');
 
@@ -4650,24 +4651,52 @@ async function loadSubsectionData(subsectionName) {
             // Cleanup already has event listeners
             console.log('Cleanup subsection selected');
             break;
-        case 'app-config':
-            await loadAdminSettings();
-            await loadAppConfigForm();
+        case 'system-info':
+            loadHardwareInfo();
             break;
-        case 'authentication':
-            await loadAdminSettings();
-            loadAuthenticationForm();
+        case 'app-config':
+            // Already preloaded in loadAllAppManagementSettings()
+            break;
+        case 'authentication-sso':
+            // Both auth forms already preloaded, tabs within this section handle switching
+            break;
+        case 'local-auth':
+            // Tab within authentication-sso, no additional loading needed
+            break;
+        case 'oidc-auth':
+            // Tab within authentication-sso, no additional loading needed
             break;
         case 'security-config':
-            await loadAdminSettings();
-            loadSecurityConfigForm();
-            break;
-        case 'oidc-config':
-            await loadOIDCConfig();
+            // Already preloaded in loadAllAppManagementSettings()
             break;
         case 'audit-log':
             loadAuditLogs();
             break;
+    }
+}
+
+/**
+ * Load all app management settings upfront so they're ready when user clicks tabs
+ * This fixes the issue where settings weren't populated until after navigating away and back
+ */
+async function loadAllAppManagementSettings() {
+    try {
+        // Ensure admin settings are loaded first
+        if (!currentAdminSettings) {
+            await loadAdminSettings();
+        }
+        
+        // Preload all subsection data in parallel for better performance
+        await Promise.all([
+            loadAppConfigForm(),
+            Promise.resolve(loadAuthenticationForm()),
+            loadOIDCConfigForm(),
+            Promise.resolve(loadSecurityConfigForm())
+        ]);
+        
+        console.log('All app management settings preloaded');
+    } catch (error) {
+        console.error('Error preloading app management settings:', error);
     }
 }
 

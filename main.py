@@ -60,7 +60,7 @@ from external_auth import get_external_auth_config, reload_external_auth_config
 from oidc_auth import OIDCService
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.6.21-12"
+APP_VERSION = "2.6.32-12"
 
 def cleanup_old_logs():
     """

@@ -286,22 +286,6 @@
                 </div>
             </section>
 
-            <!-- Hardware Information Section -->
-            <section class="hardware-info glass-card">
-                <h2>Server Hardware Information</h2>
-                <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
-                    View server hardware capabilities and available acceleration technologies for video processing.
-                </p>
-
-                <div id="hardware-info-content">
-                    <p class="empty-state">Loading hardware information...</p>
-                </div>
-
-                <button id="refresh-hardware-btn" class="btn btn-secondary" style="margin-top: 1rem;">
-                    🔄 Refresh Hardware Info
-                </button>
-            </section>
-
             <footer class="settings-footer">
                 <p>Vidnag Framework &copy; 2025 Maintained by Tidnag</p>
                 <p class="footer-note">Built with yt-dlp for easy video downloading</p>
@@ -509,6 +493,7 @@
                 <div class="subsection-tabs">
                     <button class="subsection-tab active" data-subsection="cleanup">Cleanup</button>
                     <button class="subsection-tab" data-subsection="database">Database</button>
+                    <button class="subsection-tab" data-subsection="system-info">System Info</button>
                 </div>
 
                 <!-- Cleanup Subsection (moved from Settings) -->
@@ -608,17 +593,32 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- System Info Subsection -->
+                <div id="system-info-subsection" class="subsection-content">
+                    <h3>System Information</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+                        View server hardware capabilities and available acceleration technologies for video processing.
+                    </p>
+
+                    <div id="hardware-info-content">
+                        <p class="empty-state">Loading hardware information...</p>
+                    </div>
+
+                    <button id="refresh-hardware-btn" class="btn btn-secondary" style="margin-top: 1rem;">
+                        🔄 Refresh Hardware Info
+                    </button>
+                </div>
             </section>
 
-            <!-- Security Management Section -->
-            <section class="security-management glass-card">
-                <h2>🔒 Security Management</h2>
+            <!-- App Management Section -->
+            <section class="app-management glass-card">
+                <h2>🔧 App Management</h2>
 
                 <!-- Subsection Tabs -->
                 <div class="subsection-tabs">
-                    <button class="subsection-tab active" data-subsection="app-config">App Config</button>
-                    <button class="subsection-tab" data-subsection="authentication">Authentication</button>
-                    <button class="subsection-tab" data-subsection="oidc-config">OIDC / SSO</button>
+                    <button class="subsection-tab active" data-subsection="app-config">General Settings</button>
+                    <button class="subsection-tab" data-subsection="authentication-sso">Authentication & SSO</button>
                     <button class="subsection-tab" data-subsection="security-config">Security Config</button>
                     <button class="subsection-tab" data-subsection="audit-log">Audit Log</button>
                 </div>
@@ -709,105 +709,114 @@
                     </form>
                 </div>
 
-                <!-- Authentication Subsection -->
-                <div id="authentication-subsection" class="subsection-content">
-                    <h3>Authentication System</h3>
-                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure authentication and security settings.</p>
+                <!-- Authentication & SSO Subsection -->
+                <div id="authentication-sso-subsection" class="subsection-content">
+                    <h3>Authentication & Single Sign-On</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure authentication system and OIDC/OAuth with external identity providers.</p>
 
-                    <div class="warning-box" style="margin-bottom: 2rem;">
-                        <strong>⚠️ Important:</strong> Changes to these settings require an application restart to take effect.
+                    <!-- Tabs for Local Auth vs OIDC Config -->
+                    <div class="subsection-tabs" style="margin-bottom: 2rem;">
+                        <button class="subsection-tab active" data-subsection="local-auth" style="font-size: 0.9rem;">Local Authentication</button>
+                        <button class="subsection-tab" data-subsection="oidc-auth" style="font-size: 0.9rem;">OIDC / SSO</button>
                     </div>
 
-                    <form id="authentication-form">
-                        <!-- Authentication Toggle -->
-                        <div class="settings-section">
-                            <h4>Authentication</h4>
+                    <!-- Local Authentication Settings -->
+                    <div id="local-auth-subsection" class="subsection-content active">
+                        <h4 style="margin-top: 0;">Authentication System</h4>
 
-                            <div class="preference-item">
-                                <div class="preference-text">
-                                    <strong>Enable Authentication</strong>
-                                    <p>When disabled, all users have admin access. Only disable in trusted environments.</p>
+                        <div class="warning-box" style="margin-bottom: 2rem;">
+                            <strong>⚠️ Important:</strong> Changes to these settings require an application restart to take effect.
+                        </div>
+
+                        <form id="authentication-form">
+                            <!-- Authentication Toggle -->
+                            <div class="settings-section">
+                                <h4>Authentication</h4>
+
+                                <div class="preference-item">
+                                    <div class="preference-text">
+                                        <strong>Enable Authentication</strong>
+                                        <p>When disabled, all users have admin access. Only disable in trusted environments.</p>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="auth-enabled">
+                                        <span class="toggle-slider"></span>
+                                    </label>
                                 </div>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="auth-enabled">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                            </div>
-                        </div>
-
-                        <div class="cleanup-divider"></div>
-
-                        <!-- JWT Settings -->
-                        <div class="settings-section">
-                            <h4>JWT Configuration</h4>
-
-                            <div class="form-group">
-                                <label for="jwt-session-expiry">Session Expiry (hours)</label>
-                                <input type="number" id="jwt-session-expiry" class="form-control" min="1" max="168" step="1" required>
-                                <small style="color: var(--text-muted);">How long users stay logged in. Range: 1-168 hours (7 days).</small>
                             </div>
 
-                            <div class="form-group">
-                                <label for="jwt-key-rotation">Key Rotation (days)</label>
-                                <input type="number" id="jwt-key-rotation" class="form-control" min="1" max="365" step="1" required>
-                                <small style="color: var(--text-muted);">How often JWT signing keys are rotated. Range: 1-365 days.</small>
-                            </div>
-                        </div>
+                            <div class="cleanup-divider"></div>
 
-                        <div class="cleanup-divider"></div>
+                            <!-- JWT Settings -->
+                            <div class="settings-section">
+                                <h4>JWT Configuration</h4>
 
-                        <!-- Account Lockout Settings -->
-                        <div class="settings-section">
-                            <h4>Account Lockout</h4>
+                                <div class="form-group">
+                                    <label for="jwt-session-expiry">Session Expiry (hours)</label>
+                                    <input type="number" id="jwt-session-expiry" class="form-control" min="1" max="168" step="1" required>
+                                    <small style="color: var(--text-muted);">How long users stay logged in. Range: 1-168 hours (7 days).</small>
+                                </div>
 
-                            <div class="form-group">
-                                <label for="failed-login-max">Maximum Failed Login Attempts</label>
-                                <input type="number" id="failed-login-max" class="form-control" min="3" max="20" step="1" required>
-                                <small style="color: var(--text-muted);">Account locks after this many failed attempts. Range: 3-20 attempts.</small>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="failed-login-lockout">Lockout Duration (minutes)</label>
-                                <input type="number" id="failed-login-lockout" class="form-control" min="5" max="1440" step="5" required>
-                                <small style="color: var(--text-muted);">How long accounts remain locked. Range: 5-1440 minutes (24 hours).</small>
-                            </div>
-                        </div>
-
-                        <div class="cleanup-divider"></div>
-
-                        <!-- Suspicious IP Settings -->
-                        <div class="settings-section">
-                            <h4>Suspicious Activity Detection</h4>
-
-                            <div class="form-group">
-                                <label for="suspicious-ip-threshold">Suspicious IP Threshold</label>
-                                <input type="number" id="suspicious-ip-threshold" class="form-control" min="2" max="10" step="1" required>
-                                <small style="color: var(--text-muted);">Flag IP as suspicious after this many failed attempts. Range: 2-10 attempts.</small>
+                                <div class="form-group">
+                                    <label for="jwt-key-rotation">Key Rotation (days)</label>
+                                    <input type="number" id="jwt-key-rotation" class="form-control" min="1" max="365" step="1" required>
+                                    <small style="color: var(--text-muted);">How often JWT signing keys are rotated. Range: 1-365 days.</small>
+                                </div>
                             </div>
 
-                            <div class="form-group">
-                                <label for="suspicious-ip-window">Detection Window (hours)</label>
-                                <input type="number" id="suspicious-ip-window" class="form-control" min="1" max="168" step="1" required>
-                                <small style="color: var(--text-muted);">Time window for counting suspicious attempts. Range: 1-168 hours (7 days).</small>
+                            <div class="cleanup-divider"></div>
+
+                            <!-- Account Lockout Settings -->
+                            <div class="settings-section">
+                                <h4>Account Lockout</h4>
+
+                                <div class="form-group">
+                                    <label for="failed-login-max">Maximum Failed Login Attempts</label>
+                                    <input type="number" id="failed-login-max" class="form-control" min="3" max="20" step="1" required>
+                                    <small style="color: var(--text-muted);">Account locks after this many failed attempts. Range: 3-20 attempts.</small>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="failed-login-lockout">Lockout Duration (minutes)</label>
+                                    <input type="number" id="failed-login-lockout" class="form-control" min="5" max="1440" step="5" required>
+                                    <small style="color: var(--text-muted);">How long accounts remain locked. Range: 5-1440 minutes (24 hours).</small>
+                                </div>
                             </div>
-                        </div>
 
-                        <div style="margin-top: 2rem;">
-                            <button type="submit" class="btn btn-primary">Save Authentication Settings</button>
-                        </div>
-                    </form>
-                </div>
+                            <div class="cleanup-divider"></div>
 
-                <!-- OIDC / SSO Subsection -->
-                <div id="oidc-config-subsection" class="subsection-content">
-                    <h3>OIDC / Single Sign-On Configuration</h3>
-                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">Configure OIDC/OAuth authentication with external identity providers (Keycloak, Okta, Google, etc.).</p>
+                            <!-- Suspicious IP Settings -->
+                            <div class="settings-section">
+                                <h4>Suspicious Activity Detection</h4>
 
-                    <div class="warning-box" style="margin-bottom: 2rem;">
-                        <strong>⚠️ Important:</strong> Changes to these settings require an application restart to take effect. Authentication must be enabled first.
+                                <div class="form-group">
+                                    <label for="suspicious-ip-threshold">Suspicious IP Threshold</label>
+                                    <input type="number" id="suspicious-ip-threshold" class="form-control" min="2" max="10" step="1" required>
+                                    <small style="color: var(--text-muted);">Flag IP as suspicious after this many failed attempts. Range: 2-10 attempts.</small>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="suspicious-ip-window">Detection Window (hours)</label>
+                                    <input type="number" id="suspicious-ip-window" class="form-control" min="1" max="168" step="1" required>
+                                    <small style="color: var(--text-muted);">Time window for counting suspicious attempts. Range: 1-168 hours (7 days).</small>
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 2rem;">
+                                <button type="submit" class="btn btn-primary">Save Authentication Settings</button>
+                            </div>
+                        </form>
                     </div>
 
-                    <form id="oidc-config-form">
+                    <!-- OIDC / SSO Settings -->
+                    <div id="oidc-auth-subsection" class="subsection-content">
+                        <h4 style="margin-top: 0;">OIDC / Single Sign-On Configuration</h4>
+
+                        <div class="warning-box" style="margin-bottom: 2rem;">
+                            <strong>⚠️ Important:</strong> Changes to these settings require an application restart to take effect. Authentication must be enabled first.
+                        </div>
+
+                        <form id="oidc-config-form">
                         <!-- OIDC Toggle -->
                         <div class="settings-section">
                             <h4>OIDC / SSO Status</h4>
@@ -937,7 +946,8 @@
                         <div style="margin-top: 2rem;">
                             <button type="submit" class="btn btn-primary">Save OIDC Configuration</button>
                         </div>
-                    </form>
+                        </form>
+                    </div>
                 </div>
 
                 <!-- Security Config Subsection -->
