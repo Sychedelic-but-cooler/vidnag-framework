@@ -4608,12 +4608,18 @@ function initSubsectionTabs() {
 
         newButton.addEventListener('click', () => {
             const subsectionName = newButton.dataset.subsection;
+            console.log(`Tab clicked: ${subsectionName}`, { button: newButton, container: tabsContainer });
             const tabsContainer = newButton.closest('.subsection-tabs');
             
             if (!tabsContainer) return;
 
-            // Get the parent container - could be a section or a subsection-content div
-            const parentContainer = tabsContainer.closest('section') || tabsContainer.closest('.subsection-content');
+            // Find the parent container that directly contains this tab group
+            // First check if tabs container has a parent with .subsection-content or section
+            let parentContainer = tabsContainer.parentElement;
+            while (parentContainer && !parentContainer.classList.contains('subsection-content') && !parentContainer.classList.contains('tab-content') && parentContainer.tagName !== 'SECTION') {
+                parentContainer = parentContainer.parentElement;
+            }
+            
             if (!parentContainer) return;
 
             // Remove active from all tabs in this tab group
@@ -4622,13 +4628,19 @@ function initSubsectionTabs() {
             });
             newButton.classList.add('active');
 
-            // Hide all subsections in this parent container
-            parentContainer.querySelectorAll('.subsection-content').forEach(content => {
+            // Only hide/show direct children of parentContainer that are subsection-content
+            // This ensures we only affect the subsections directly under this parent
+            const allSubsections = Array.from(parentContainer.children).filter(child => 
+                child.classList.contains('subsection-content')
+            );
+            allSubsections.forEach(content => {
                 content.classList.remove('active');
             });
 
             // Show target subsection
-            const targetSubsection = parentContainer.querySelector(`#${subsectionName}-subsection`);
+            const targetSelector = `#${subsectionName}-subsection`;
+            const targetSubsection = parentContainer.querySelector(targetSelector);
+            console.log(`Target subsection selector: ${targetSelector}, found:`, targetSubsection);
             if (targetSubsection) {
                 targetSubsection.classList.add('active');
 
@@ -4643,6 +4655,7 @@ function initSubsectionTabs() {
  * Load data for specific subsection
  */
 async function loadSubsectionData(subsectionName) {
+    console.log(`Loading subsection data for: ${subsectionName}`);
     switch(subsectionName) {
         case 'database':
             loadDatabaseStats();
@@ -4690,7 +4703,8 @@ async function loadAllAppManagementSettings() {
         await Promise.all([
             loadAppConfigForm(),
             Promise.resolve(loadAuthenticationForm()),
-            loadOIDCConfigForm(),
+            // loadOIDCConfigForm was renamed to loadOIDCConfig; call the existing implementation
+            Promise.resolve(loadOIDCConfig()),
             Promise.resolve(loadSecurityConfigForm())
         ]);
         
