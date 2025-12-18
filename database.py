@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import enum
 import uuid
+from config import DATABASE_FILE
 
 
 class UTCDateTime(TypeDecorator):
@@ -36,8 +37,8 @@ class UTCDateTime(TypeDecorator):
                 value = value.replace(tzinfo=timezone.utc)
         return value
 
-# SQLite database file location
-DATABASE_URL = "sqlite:///./downloads.db"
+# SQLite database file location (uses central config)
+DATABASE_URL = f"sqlite:///./{DATABASE_FILE}"
 
 # Create the database engine with SQLite-specific configuration
 # check_same_thread=False allows multiple threads to share the connection

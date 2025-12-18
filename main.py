@@ -58,6 +58,7 @@ from security import (
 from auth import PasswordService, JWTService, AuthService, AuditLogService
 from external_auth import get_external_auth_config, reload_external_auth_config
 from oidc_auth import OIDCService
+from config import DATABASE_FILE
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
 APP_VERSION = "2.6.32-12"
@@ -164,7 +165,8 @@ def set_directory_permissions():
                     logger.warning(f"Could not set permissions on {dir_path}: {e}")
 
         # Private files: 600 (owner rw only)
-        for file_path in ["data.db"]:
+        from config import DATABASE_FILE as CONFIG_DATABASE_FILE
+        for file_path in [CONFIG_DATABASE_FILE]:
             if os.path.exists(file_path):
                 try:
                     os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
@@ -3925,7 +3927,7 @@ async def get_database_stats(
 
     # Get database file size
     import os
-    db_path = "downloads.db"
+    db_path = DATABASE_FILE
     if os.path.exists(db_path):
         stats["database_size_bytes"] = os.path.getsize(db_path)
         stats["database_size_mb"] = round(os.path.getsize(db_path) / (1024 * 1024), 2)
@@ -3950,7 +3952,7 @@ async def backup_database(
     import shutil
     from datetime import datetime
 
-    db_path = "downloads.db"
+    db_path = DATABASE_FILE
     backup_dir = "backups"
 
     if not os.path.exists(db_path):
@@ -3964,7 +3966,7 @@ async def backup_database(
 
     # Create backup filename with timestamp
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    backup_filename = f"{backup_dir}/downloads.db.backup.{timestamp}"
+    backup_filename = f"{backup_dir}/{DATABASE_FILE}.backup.{timestamp}"
 
     try:
         shutil.copy2(db_path, backup_filename)
@@ -4006,7 +4008,7 @@ async def vacuum_database(
 
         # Get new database size
         import os
-        db_path = "downloads.db"
+        db_path = DATABASE_FILE
         new_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
 
         return {
@@ -4099,7 +4101,7 @@ async def list_backups(
     os.makedirs(backup_dir, exist_ok=True)
 
     # Get both manual backups and pre-restore safety backups from backups/ directory
-    backup_files = glob.glob(f"{backup_dir}/downloads.db.backup.*") + glob.glob(f"{backup_dir}/downloads.db.pre-restore.*")
+    backup_files = glob.glob(f"{backup_dir}/{DATABASE_FILE}.backup.*") + glob.glob(f"{backup_dir}/{DATABASE_FILE}.pre-restore.*")
 
     backups = []
     for backup_file in backup_files:
@@ -4138,11 +4140,11 @@ async def restore_database(
     import shutil
     from datetime import datetime
 
-    db_path = "downloads.db"
+    db_path = DATABASE_FILE
     backup_dir = "backups"
 
     # Validate backup file exists and has correct prefix
-    if not backup_filename.startswith(f"{backup_dir}/downloads.db.backup.") and not backup_filename.startswith(f"{backup_dir}/downloads.db.pre-restore."):
+    if not backup_filename.startswith(f"{backup_dir}/{DATABASE_FILE}.backup.") and not backup_filename.startswith(f"{backup_dir}/{DATABASE_FILE}.pre-restore."):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid backup filename"
@@ -4159,7 +4161,7 @@ async def restore_database(
         os.makedirs(backup_dir, exist_ok=True)
 
         # Create a safety backup of current database before restoring
-        safety_backup = f"{backup_dir}/downloads.db.pre-restore.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+        safety_backup = f"{backup_dir}/{DATABASE_FILE}.pre-restore.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         if os.path.exists(db_path):
             shutil.copy2(db_path, safety_backup)
 
@@ -4188,12 +4190,12 @@ async def delete_backup(
 ):
     """
     Delete a backup file (ADMIN ONLY).
-    Expects just the filename part (e.g., "downloads.db.backup.20251216_220650")
+    Expects just the filename part (e.g., f"{DATABASE_FILE}.backup.20251216_220650")
     """
     import os
 
     # Validate backup filename format (without directory prefix)
-    if not backup_filename.startswith("downloads.db.backup.") and not backup_filename.startswith("downloads.db.pre-restore."):
+    if not backup_filename.startswith(f"{DATABASE_FILE}.backup.") and not backup_filename.startswith(f"{DATABASE_FILE}.pre-restore."):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid backup filename"
@@ -4232,13 +4234,13 @@ async def download_backup(
 ):
     """
     Download a backup file (ADMIN ONLY).
-    Expects just the filename part (e.g., "downloads.db.backup.20251216_220650")
+    Expects just the filename part (e.g., f"{DATABASE_FILE}.backup.20251216_220650")
     """
     import os
     from fastapi.responses import FileResponse
 
     # Validate backup filename format (without directory prefix)
-    if not backup_filename.startswith("downloads.db.backup.") and not backup_filename.startswith("downloads.db.pre-restore."):
+    if not backup_filename.startswith(f"{DATABASE_FILE}.backup.") and not backup_filename.startswith(f"{DATABASE_FILE}.pre-restore."):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid backup filename"
