@@ -1,27 +1,3 @@
-#!/usr/bin/env python3.12
-"""
-Authentication Maintenance Utility for Vidnag Framework
-
-Command-line utility for managing user accounts and authentication data.
-
-Commands:
-    unlock-user <username>       - Unlock a locked account and clear failed login attempts
-    reset-password <username>    - Reset a user's password
-    cleanup-old-logs <days>      - Remove audit logs older than N days
-    list-locked-accounts         - Show all disabled accounts
-    list-users                   - Show all user accounts
-    delete-user <username>       - Delete a user account (with confirmation)
-
-Usage:
-    python3.12 auth_maintenance.py <command> [arguments]
-
-Examples:
-    python3.12 auth_maintenance.py unlock-user john
-    python3.12 auth_maintenance.py reset-password john
-    python3.12 auth_maintenance.py cleanup-old-logs 90
-    python3.12 auth_maintenance.py list-locked-accounts
-"""
-
 import sys
 import getpass
 from datetime import datetime, timezone, timedelta
@@ -31,17 +7,8 @@ from auth import PasswordService, AuthService
 
 
 def unlock_user(username):
-    """
-    Unlock a locked account.
-
-    Enables the account (is_disabled = False) and clears all failed login attempts.
-
-    Args:
-        username: Username to unlock
-
-    Returns:
-        Exit code (0 = success, 1 = error)
-    """
+    # Enables the account and clears all failed login attempts. 
+    # Clearing failures allows the user more grace to prevent immediate re-locking.
     print(f"Unlocking account: {username}")
     print()
 
@@ -76,17 +43,7 @@ def unlock_user(username):
 
 
 def reset_password(username):
-    """
-    Reset a user's password.
-
-    Prompts for new password and updates the user's password hash.
-
-    Args:
-        username: Username to reset password for
-
-    Returns:
-        Exit code (0 = success, 1 = error)
-    """
+    # Reset a user's password. Prompts for new password and updates the user's password hash.
     print(f"Resetting password for: {username}")
     print()
 
@@ -129,15 +86,7 @@ def reset_password(username):
 
 
 def cleanup_old_logs(days):
-    """
-    Remove audit logs older than N days.
-
-    Args:
-        days: Number of days to keep logs (logs older than this are deleted)
-
-    Returns:
-        Exit code (0 = success, 1 = error)
-    """
+    # Remove audit logs older than N days, older entries are deleted.
     try:
         days = int(days)
         if days < 1:
@@ -189,12 +138,7 @@ def cleanup_old_logs(days):
 
 
 def list_locked_accounts():
-    """
-    Show all disabled accounts.
-
-    Returns:
-        Exit code (0 = success)
-    """
+    # Show all disabled accounts.
     print("Locked/Disabled Accounts")
     print("=" * 80)
     print()
@@ -233,12 +177,7 @@ def list_locked_accounts():
 
 
 def list_users():
-    """
-    Show all user accounts.
-
-    Returns:
-        Exit code (0 = success)
-    """
+    # Show all user accounts.
     print("All User Accounts")
     print("=" * 80)
     print()
@@ -276,17 +215,7 @@ def list_users():
 
 
 def delete_user(username):
-    """
-    Delete a user account.
-
-    Requires confirmation before deletion.
-
-    Args:
-        username: Username to delete
-
-    Returns:
-        Exit code (0 = success, 1 = error)
-    """
+    # Delete a user account. Requires confirmation before deletion.
     print(f"Delete user account: {username}")
     print()
 
@@ -334,12 +263,12 @@ def delete_user(username):
 
 
 def print_usage():
-    """Print usage information."""
+    # Print usage information.
     print(__doc__)
 
 
 def main():
-    """Main entry point."""
+    # Main entry point.
     if len(sys.argv) < 2:
         print_usage()
         return 1

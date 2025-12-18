@@ -1,23 +1,7 @@
 """
-Admin Settings Management for Security and Proxy Configuration
-
-This module handles loading security-critical settings from admin_settings.json.
-These settings are READ-ONLY after startup and cannot be modified via web UI.
-
-Settings include:
-- CORS origin whitelist
-- Trusted proxy configuration
-- Rate limiting parameters
-- HTTPS enforcement
-- Debug logging control
-- yt-dlp update permissions
-
-No API endpoints expose these settings. All changes require:
-1. Edit admin_settings.json on disk
-2. Restart the application
-
-This approach ensures security settings cannot be accidentally modified
-or exploited via the web interface until proper authentication is implemented.
+Admin-side settings management for the application.
+This module handles configurations stored in ( ADMIN_SETTINGS_FILE ).
+These settings are not user-configurable and cannot be accessed without auth.
 """
 
 import json
@@ -28,18 +12,20 @@ from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
-# Location of the admin settings file on disk
+# Location of the admin settings file on disk "folder/filename", not advisible to change actual filename
 ADMIN_SETTINGS_FILE = "admin_settings.json"
+"""
+Default settings, used when creating or merging settings files
+This application disables most settings by default, admins should be allowed full control over enabling features as needed.
+Microsoft can suck it for enabling settings by default.
+"""
 
-# Safe defaults - very restrictive, requiring explicit configuration for production
 DEFAULT_ADMIN_SETTINGS = {
     "cors": {
-        "enabled": True,  # Enable CORS by default
-        "allowed_origins": [
+        "enabled": False,  # Defaults to disabled, this should be enabled for public deployments
+        "allowed_origins": [ # Defaults to localhost, adds both ways to call localhost
             "http://localhost",
-            "http://localhost:8000",
             "http://127.0.0.1",
-            "http://127.0.0.1:8000",
         ],
         "allow_credentials": True,
         "allowed_methods": ["GET", "POST", "DELETE"],
@@ -47,87 +33,84 @@ DEFAULT_ADMIN_SETTINGS = {
     },
     "proxy": {
         "is_behind_proxy": False,  # Set to True if behind a reverse proxy
-        "proxy_header": "X-Forwarded-For",  # Header to read client IP from
-        "trusted_proxies": ["127.0.0.1"],  # Only localhost by default
+        "proxy_header": "X-Forwarded-For",  # Header to read Real Client IP from
+        "trusted_proxies": ["127.0.0.1"],  # Allows localhost by default
     },
+    # These default values should be good for most people, the frontend is designed to sit around 50 requests per minute
     "rate_limiting": {
-        "enabled": True,
-        "max_requests_per_window": 20,
-        "window_seconds": 60,
-        "max_tracked_ips": 10000,
-        "cleanup_interval_seconds": 3600,
+        "enabled": False, # Disabled by default, enable for public deployments to prevent abuse
+        "max_requests_per_window": 70, # Number of requests allowed per window
+        "window_seconds": 60, # Tracked in seconds, how long before resetting the request count
+        "max_tracked_ips": 10000, # Number of IPS to track for rate limiting, smaller number uses less memory but may allow bruteforcing
+        "cleanup_interval_seconds": 3600, # How long to keep an IP tracked in the rate limiter before removing it
     },
     "security": {
-        "debug_proxy_headers": False,  # Disable header logging in production
-        "validate_ip_format": True,
+        "debug_proxy_headers": False,  # Disable header logging in production, useful when setting up proxies
+        "validate_ip_format": True, # Validate that IPs in headers are well-formed, defaults to True for security
         "allow_ytdlp_update": False,  # Disable yt-dlp updates by default for security
     },
     "auth": {
-        "enabled": False,  # Disabled by default for gradual rollout
-        "jwt_algorithm": "HS256",
-        "jwt_session_expiry_hours": 24,
-        "jwt_key_rotation_days": 7,
-        "failed_login_attempts_max": 5,
-        "failed_login_lockout_minutes": 30,
-        "suspicious_ip_threshold": 3,
-        "suspicious_ip_window_hours": 24,
-        "require_auth_for_all_endpoints": True,
+        "enabled": False,  # Disabled by default, PLEASE ENABLE FOR PUBLIC DEPLOYMENTS
+        "jwt_algorithm": "HS256", # Probably not worth changing this but hey, more power to the admin
+        "jwt_session_expiry_hours": 24, # Default to 24 hours session expiry, increase to allow users to stay logged in longer
+        "jwt_key_rotation_days": 7, # How often to rotate the JWT signing key
+        "failed_login_attempts_max": 5, # Number of failed login attempts before account lockout
+        "failed_login_lockout_minutes": 30, #How long to lockout an account after failures before unlock
+        "suspicious_ip_threshold": 3, # Number of failed logins from different IPs to consider an IP suspicious
+        "suspicious_ip_window_hours": 24, # How long to keep an IP tracked for suspicious activity, different from rate limiting
+        "require_auth_for_all_endpoints": True, # Default to requiring auth for all endpoints, public_endpoints array overrides this
         "public_endpoints": [
-            "/",
-            "/favicon.ico",
-            "/api/auth/login",
-            "/api/auth/setup",
-            "/api/auth/check-setup",
-            "/api/auth/status",
-            "/api/files/download/*",
-            "/api/files/thumbnail/*",
-            "/api/files/video/*",
-            "/api/tools/audio/*",
-            "/assets/*"
+            "/", # Root endpoint, content changes based on auth status
+            "/favicon.ico", # Favicon for browser titles
+            "/api/auth/login", # Login endpoint
+            "/api/auth/setup", # Initial setup endpoint, not used after first account is created
+            "/api/auth/check-setup", # Intial setup check endpoint, not userd after first account is created
+            "/api/auth/status", # Endpoint to check if auth is enabled, used by frontend to determine if login screen is needed
+            "/api/files/download/*", # File Download endpoint, must be public to allow public access. Private downloads do not use this and will still be protected
+            "/api/files/thumbnail/*", # Thumbnail Image endpoint, must be public to allow public access
+            "/api/files/video/*", # Video Conversion endpoint, must be public to allow public access.
+            "/api/tools/audio/*", # Audio Conversion endpoint, must be public to allow public access.
+            "/assets/*" # Serve static assets like JS/CSS without auth
         ],
     },
 }
 
-
+# Declare Data Classes for Admin Settings
 @dataclass
 class CORSConfig:
-    """CORS configuration"""
+    # CORS Configuration
     enabled: bool
     allowed_origins: List[str]
     allow_credentials: bool
     allowed_methods: List[str]
     allowed_headers: List[str]
 
-
 @dataclass
 class ProxyConfig:
-    """Proxy trust and header configuration"""
+    # Proxy Configuration
     is_behind_proxy: bool
-    proxy_header: str  # e.g., "X-Forwarded-For", "X-Real-IP", "CF-Connecting-IP"
-    trusted_proxies: List[str]  # List of trusted proxy IPs or CIDR ranges
-
+    proxy_header: str
+    trusted_proxies: List[str]
 
 @dataclass
 class RateLimitConfig:
-    """Rate limiting configuration"""
+    # Rate Limiting Configuration
     enabled: bool
     max_requests_per_window: int
     window_seconds: int
     max_tracked_ips: int
     cleanup_interval_seconds: int
 
-
 @dataclass
 class SecurityConfig:
-    """General security configuration"""
+    # General Securitry Configuration
     debug_proxy_headers: bool
     validate_ip_format: bool
     allow_ytdlp_update: bool
 
-
 @dataclass
 class AuthConfig:
-    """Authentication configuration"""
+    # Authentication Configuration
     enabled: bool
     jwt_algorithm: str
     jwt_session_expiry_hours: int
@@ -139,44 +122,20 @@ class AuthConfig:
     require_auth_for_all_endpoints: bool
     public_endpoints: List[str]
 
-
 class AdminSettings:
-    """
-    Read-only admin settings loaded from admin_settings.json at startup.
-    
-    This class loads settings once during application initialization
-    and provides read-only access throughout the application lifecycle.
-    
-    Changes require:
-    1. Modifying admin_settings.json
-    2. Restarting the application
-    
-    This ensures security-critical settings cannot be accidentally modified
-    via API or web interface.
-    """
 
     def __init__(self):
-        """Initialize by loading settings from disk"""
+       # Initialize settings by loading from disk or using default
         self._settings: Dict[str, Any] = self._load_settings()
         self._parse_configs()
 
     def _load_settings(self) -> Dict[str, Any]:
-        """
-        Load admin settings from JSON file.
-        
-        If the file exists, loads it and merges with defaults to ensure all keys are present.
-        If the file doesn't exist, uses defaults and logs a warning with template.
-        If the file is corrupted, uses defaults and logs an error.
-        
-        Returns:
-            Dictionary of admin settings
-        """
+        # Loads settings if file exists and is readable
         if os.path.exists(ADMIN_SETTINGS_FILE):
             try:
                 with open(ADMIN_SETTINGS_FILE, 'r') as f:
                     loaded = json.load(f)
-                    # Merge with defaults - any missing keys get default values
-                    # This lets us add new settings without breaking old configs
+                    # Merge with defaults - any missing keys get default values - this allows backwards compatibility
                     merged = self._deep_merge(DEFAULT_ADMIN_SETTINGS.copy(), loaded)
                     logger.info(f"Loaded admin settings from {ADMIN_SETTINGS_FILE}")
                     return merged
@@ -193,7 +152,7 @@ class AdminSettings:
                 )
                 return DEFAULT_ADMIN_SETTINGS.copy()
         else:
-            # File doesn't exist - create it with defaults
+            # No settings file exists yet, create one with defaults
             logger.info(
                 f"{ADMIN_SETTINGS_FILE} not found. Creating with default settings..."
             )
@@ -210,11 +169,7 @@ class AdminSettings:
             return DEFAULT_ADMIN_SETTINGS.copy()
 
     def _deep_merge(self, base: Dict, override: Dict) -> Dict:
-        """
-        Recursively merge override dict into base dict.
-        
-        Allows partial configuration files - missing keys use defaults.
-        """
+        # Merge with defaults - any missing keys get default values - this allows backwards compatibility
         for key, value in override.items():
             if key in base and isinstance(base[key], dict) and isinstance(value, dict):
                 self._deep_merge(base[key], value)
@@ -223,7 +178,7 @@ class AdminSettings:
         return base
 
     def _parse_configs(self):
-        """Parse settings into typed config objects"""
+        # Parse settings into typed config objects
         cors_data = self._settings.get("cors", {})
         proxy_data = self._settings.get("proxy", {})
         rate_limit_data = self._settings.get("rate_limiting", {})
@@ -237,7 +192,7 @@ class AdminSettings:
         self.auth = AuthConfig(**auth_data)
 
     def _log_template(self):
-        """Log a template of the admin_settings.json that should be created"""
+        # Log a template of the SETTINGS_FILES that should be created
         logger.info("=" * 80)
         logger.info("To configure admin settings, create admin_settings.json with:")
         logger.info("=" * 80)
@@ -245,20 +200,11 @@ class AdminSettings:
         logger.info("=" * 80)
 
     def get_raw(self) -> Dict[str, Any]:
-        """
-        Get raw settings dictionary (for debugging/logging purposes).
-        
-        WARNING: Do not modify returned dict - settings are read-only.
-        """
+        # Get raw settings dictionary
         return self._settings.copy()
 
     def validate(self) -> tuple[bool, Optional[str]]:
-        """
-        Validate all settings for correctness.
-        
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
+        # Validate setting values for all data types
         # Import here to avoid circular imports
         from security import (
             validate_cors_origins,
@@ -266,23 +212,23 @@ class AdminSettings:
             validate_cors_methods,
         )
 
-        # Validate CORS origins
+        # Validate CORS Settings
         is_valid, error = validate_cors_origins(self.cors.allowed_origins)
         if not is_valid:
             return False, f"CORS configuration error: {error}"
 
-        # Validate CORS methods
+        # Validate CORS Settings
         is_valid, error = validate_cors_methods(self.cors.allowed_methods)
         if not is_valid:
             return False, f"CORS methods configuration error: {error}"
 
-        # Validate trusted proxies
+        # Validate Proxy Settings
         if self.proxy.is_behind_proxy and self.proxy.trusted_proxies:
             is_valid, error = validate_trusted_proxies(self.proxy.trusted_proxies)
             if not is_valid:
                 return False, f"Proxy configuration error: {error}"
 
-        # Validate rate limiting settings
+        # Validate Rate Limiting Settings
         if self.rate_limit.enabled:
             if self.rate_limit.max_requests_per_window < 1:
                 return False, "Rate limiting: max_requests_per_window must be at least 1"
@@ -293,17 +239,11 @@ class AdminSettings:
 
         return True, None
 
-
 # Global singleton instance
 _admin_settings: Optional[AdminSettings] = None
 
-
 def get_admin_settings() -> AdminSettings:
-    """
-    Get the global admin settings instance.
-    
-    Initializes on first call, then returns cached instance.
-    """
+    # Get the global admin settings instance. Initializes on first call, then returns cached instance.
     global _admin_settings
     if _admin_settings is None:
         _admin_settings = AdminSettings()
@@ -319,13 +259,8 @@ def get_admin_settings() -> AdminSettings:
     
     return _admin_settings
 
-
 def reload_admin_settings():
-    """
-    Force reload of admin settings from disk.
-    
-    Useful for testing. In production, restart the application to apply changes.
-    """
+    # Force reload of admin settings from disk. In production, restart the application to apply changes more fully.
     global _admin_settings
     _admin_settings = None
     return get_admin_settings()

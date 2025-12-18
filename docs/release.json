@@ -1,6 +1,15 @@
 {
-  "current_version": "2.6.20-12",
+  "current_version": "2.6.21-12",
   "releases": [
+    {
+      "version": "2.6.21-12",
+      "date": "2024-12-18",
+      "title": "Code Cleanup & Git Cleanup",
+      "highlights": [
+        "Remember kids, don't commit Keys or Secrets to Git",
+        "Cleaned up Code Comments in Initiazliation Files"
+      ]
+    },
     {
       "version": "2.6.20-12",
       "date": "2024-12-17",

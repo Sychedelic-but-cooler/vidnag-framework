@@ -10,21 +10,13 @@ import uuid
 
 
 class UTCDateTime(TypeDecorator):
-    """
-    Custom SQLAlchemy type that ensures all datetime values are timezone-aware (UTC).
-
-    SQLite stores datetime as strings without timezone info. This type ensures:
-    - When saving: datetime is converted to UTC
-    - When loading: naive datetime from DB is assumed to be UTC and made timezone-aware
-
-    This fixes the issue where frontend receives timestamps without timezone info,
-    causing JavaScript to interpret them as local time instead of UTC.
-    """
+    # Custom SQLAlchemy type that ensures all datetime values are timezone-aware (UTC).
+    # This fixes an issue where frontend Javascript interprets timestamps as local time instead of UTC.
     impl = DateTime
     cache_ok = True
 
     def process_bind_param(self, value, dialect):
-        """Convert datetime to UTC before saving to database"""
+        # Convert datetime to UTC before saving to database
         if value is not None:
             if value.tzinfo is None:
                 # If naive datetime, assume it's UTC
@@ -37,7 +29,7 @@ class UTCDateTime(TypeDecorator):
         return value
 
     def process_result_value(self, value, dialect):
-        """Attach UTC timezone when loading from database"""
+        # Attach UTC timezone when loading from database
         if value is not None:
             # SQLite returns naive datetime - attach UTC timezone
             if value.tzinfo is None:
@@ -56,18 +48,15 @@ engine = create_engine(
     poolclass=StaticPool
 )
 
-# Enable WAL mode for better concurrency (readers don't block writers)
+# Enable WAL mode for better concurrency, readers don't block writers
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_conn, connection_record):
-    """Set SQLite pragmas: WAL mode for concurrency, NORMAL synchronous for performance."""
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 
 # Session factory for creating database sessions
-# autocommit=False means we manually control transaction commits
-# autoflush=False prevents automatic flushing before queries
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Base class for all database models
@@ -75,7 +64,7 @@ Base = declarative_base()
 
 
 class DownloadStatus(str, enum.Enum):
-    """Possible states for a download job"""
+    # Possible states for a download job
     QUEUED = "queued"           # Waiting in queue to start
     DOWNLOADING = "downloading" # Currently downloading
     COMPLETED = "completed"     # Successfully finished
@@ -83,7 +72,7 @@ class DownloadStatus(str, enum.Enum):
 
 
 class ConversionStatus(str, enum.Enum):
-    """Possible states for a tool conversion job"""
+    # Possible states for a tool conversion job
     QUEUED = "queued"           # Waiting in queue to start
     CONVERTING = "converting"   # Currently converting
     COMPLETED = "completed"     # Successfully finished
@@ -91,10 +80,7 @@ class ConversionStatus(str, enum.Enum):
 
 
 class Download(Base):
-    """
-    Database model for tracking video downloads.
-    Stores everything about a download from URL to final file location.
-    """
+    # Database model for tracking video downloads. Stores everything about a download
     __tablename__ = "downloads"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -121,16 +107,13 @@ class Download(Base):
     user_id = Column(String, ForeignKey('users.id'), nullable=True, index=True)
     is_public = Column(Boolean, default=True, nullable=False, index=True)
 
-    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    started_at = Column(UTCDateTime, nullable=True)  # When download actually started (not when queued)
-    completed_at = Column(UTCDateTime, nullable=True)
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False) # When the job was added to queue
+    started_at = Column(UTCDateTime, nullable=True) # When the job was moved from queued to downloading
+    completed_at = Column(UTCDateTime, nullable=True) # When the download finished (success or failure)
 
 
 class ToolConversion(Base):
-    """
-    Database model for tracking tool conversion jobs (e.g., video to MP3).
-    Links to source video and tracks conversion progress.
-    """
+    # Database model for tracking tool conversion status and settings.
     __tablename__ = "tool_conversions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -156,10 +139,7 @@ class ToolConversion(Base):
 
 
 class User(Base):
-    """
-    Database model for user accounts.
-    Stores user credentials and authentication settings.
-    """
+    # Database model for user accounts. Stores user credentials and authentication settings.
     __tablename__ = "users"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -167,12 +147,12 @@ class User(Base):
     password_hash = Column(String, nullable=True)  # Nullable for OIDC-only users
     is_disabled = Column(Boolean, default=False, nullable=False, index=True)
     is_admin = Column(Boolean, default=False, nullable=False)
-    last_login = Column(UTCDateTime, nullable=True)
+    last_login = Column(UTCDateTime, nullable=True) # A future system could use this for disabling inactive accounts
     created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     # OIDC/OAuth fields
-    oidc_provider = Column(String, nullable=True)  # e.g., "keycloak", "okta", "google"
+    oidc_provider = Column(String, nullable=True)  # Provider Name, where did the account come from
     oidc_subject = Column(String, nullable=True, unique=True, index=True)  # OIDC 'sub' claim (unique identifier)
     oidc_email = Column(String, nullable=True)  # Email from OIDC provider
     oidc_linked_at = Column(UTCDateTime, nullable=True)  # When OIDC was linked to this account
@@ -180,11 +160,7 @@ class User(Base):
 
 
 class OIDCAuthState(Base):
-    """
-    Temporary storage for OIDC authorization state (PKCE flow).
-    Stores state tokens and PKCE verifiers for OAuth flow security.
-    States automatically expire after 10 minutes.
-    """
+    # Temporary store for OIDC state tokens and PKCE verifiers for OAuth flow. States automatically expire after 10 minutes.
     __tablename__ = "oidc_auth_state"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -197,10 +173,7 @@ class OIDCAuthState(Base):
 
 
 class UserLoginHistory(Base):
-    """
-    Database model for tracking all login attempts (successful and failed).
-    Used for IP tracking and suspicious activity detection.
-    """
+    # Database model for tracking login attempts, used for IP tracking and suspicious activity detection.
     __tablename__ = "user_login_history"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -213,10 +186,7 @@ class UserLoginHistory(Base):
 
 
 class JWTKey(Base):
-    """
-    Database model for JWT signing keys.
-    Supports key rotation for enhanced security.
-    """
+    # Database model for JWT signing keys. Supports key rotation for enhanced security.
     __tablename__ = "jwt_keys"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -228,10 +198,8 @@ class JWTKey(Base):
 
 
 class AuthAuditLog(Base):
-    """
-    Database model for authentication audit trail.
-    Records all authentication-related events for security monitoring.
-    """
+    # Database model for authentication audit trail. Records all authentication-related events for security monitoring.
+    # Uses database instead of file logging for long term storage and easier querying.
     __tablename__ = "auth_audit_log"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -244,10 +212,7 @@ class AuthAuditLog(Base):
 
 
 class FailedLoginAttempt(Base):
-    """
-    Database model for tracking failed login attempts.
-    Used for account lockout after too many failures.
-    """
+    # Database model for tracking failed login attempts. Used for account lockout after too many failures.
     __tablename__ = "failed_login_attempts"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -258,12 +223,7 @@ class FailedLoginAttempt(Base):
 
 
 class SystemSettings(Base):
-    """
-    System-level settings and flags stored in the database.
-
-    Used for tracking system state like first-time setup completion.
-    This table should only ever have ONE row (singleton pattern).
-    """
+    # System-level settings and flags stored in the database. Used for tracking system state like first-time setup completion.
     __tablename__ = "system_settings"
 
     id = Column(Integer, primary_key=True, default=1)  # Always 1
@@ -273,13 +233,8 @@ class SystemSettings(Base):
 
 
 def init_db():
-    """
-    Initialize the database schema.
-    Creates all tables defined by our models if they don't exist yet.
-    Safe to call multiple times - won't recreate existing tables.
-
-    Also ensures SystemSettings singleton row exists with first_time_setup flag.
-    """
+    # Initialize the database schema. Creates all tables defined by the above models if they don't exist yet.
+    # This will not recreate existing tables or modify existing schemas.
     Base.metadata.create_all(bind=engine)
 
     # Ensure SystemSettings singleton exists
@@ -293,10 +248,8 @@ def init_db():
 
 @contextmanager
 def get_db():
-    """
-    Context manager for database sessions with automatic transaction handling.
-    Commits on success, rolls back on errors, always closes the session.
-    """
+    # Context manager for database sessions with transaction handling.
+    # Commits on success, rolls back on errors, always closes the session.
     db = SessionLocal()
     try:
         yield db
@@ -309,10 +262,7 @@ def get_db():
 
 
 def get_db_session():
-    """
-    FastAPI dependency injection for database sessions.
-    Does not auto-commit - caller is responsible for commits.
-    """
+    # FastAPI dependency injection for database sessions. Does not auto-commit - caller is responsible for commits.
     db = SessionLocal()
     try:
         yield db
