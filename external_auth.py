@@ -8,8 +8,8 @@ import os
 from dataclasses import dataclass
 from typing import List, Optional
 
-#location of the external auth settings file on disk "folder/filename", not advisable to change actual filename
-EXTERNAL_AUTH_FILE = "external_auth.json"
+#location of the external auth settings file on disk "folder/filename"
+EXTERNAL_AUTH_FILE = "settings/external_auth.json"
 
 # Default Configuration Structure
 DEFAULT_EXTERNAL_AUTH_CONFIG = {

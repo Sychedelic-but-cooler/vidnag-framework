@@ -7,8 +7,8 @@ import json
 import os
 from typing import Optional
 
-# Location of the user settings file on disk "folder/filename", not advisible to change actual filename
-SETTINGS_FILE = "settings.json"
+# Location of the user settings file on disk "folder/filename"
+SETTINGS_FILE = "settings/user_settings.json"
 
 # Default settings, used when creating or merging settings files
 DEFAULT_SETTINGS = {

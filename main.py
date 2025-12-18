@@ -98,6 +98,45 @@ def cleanup_old_logs():
         logger.error(f"Error during log cleanup: {e}")
 
 
+def init_settings_folder():
+    """
+    Initialize the settings folder with proper Linux permissions (700).
+    Creates the settings directory if it doesn't exist.
+    This must be called before any settings files are accessed.
+    """
+    try:
+        import stat
+
+        settings_dir = "settings"
+        
+        # Create settings directory if it doesn't exist
+        if not os.path.exists(settings_dir):
+            os.makedirs(settings_dir, exist_ok=True)
+            logger.info(f"Created settings directory: {settings_dir}")
+        
+        # Set directory permissions to 700 (owner rwx only, no group/others)
+        try:
+            os.chmod(settings_dir, stat.S_IRWXU)  # 700 permissions
+            logger.debug(f"Set permissions 700 on {settings_dir}")
+        except Exception as e:
+            logger.warning(f"Could not set permissions on {settings_dir}: {e}")
+        
+        # Set permissions on all settings files to 600 (owner rw only)
+        try:
+            for file_name in os.listdir(settings_dir):
+                file_path = os.path.join(settings_dir, file_name)
+                if os.path.isfile(file_path):
+                    os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)  # 600 permissions
+                    logger.debug(f"Set permissions 600 on {file_path}")
+        except Exception as e:
+            logger.warning(f"Could not set permissions on settings files: {e}")
+            
+        logger.info("Settings folder initialized with proper permissions")
+        
+    except Exception as e:
+        logger.error(f"Error initializing settings folder: {e}")
+
+
 def set_directory_permissions():
     """
     Set file permissions: downloads/logs (755), cookies (700), db/config (600).
@@ -116,7 +155,7 @@ def set_directory_permissions():
                     logger.warning(f"Could not set permissions on {dir_path}: {e}")
 
         # Private directories: 700 (owner rwx only)
-        for dir_path in ["cookies"]:
+        for dir_path in ["cookies", "settings"]:
             if os.path.exists(dir_path):
                 try:
                     os.chmod(dir_path, stat.S_IRWXU)
@@ -125,13 +164,25 @@ def set_directory_permissions():
                     logger.warning(f"Could not set permissions on {dir_path}: {e}")
 
         # Private files: 600 (owner rw only)
-        for file_path in ["data.db", ADMIN_SETTINGS_FILE]:
+        for file_path in ["data.db"]:
             if os.path.exists(file_path):
                 try:
                     os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
                     logger.debug(f"Set permissions 600 on {file_path}")
                 except Exception as e:
                     logger.warning(f"Could not set permissions on {file_path}: {e}")
+        
+        # Set permissions on all settings files to 600 (owner rw only)
+        try:
+            settings_dir = "settings"
+            if os.path.exists(settings_dir):
+                for file_name in os.listdir(settings_dir):
+                    file_path = os.path.join(settings_dir, file_name)
+                    if os.path.isfile(file_path):
+                        os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)  # 600 permissions
+                        logger.debug(f"Set permissions 600 on {file_path}")
+        except Exception as e:
+            logger.warning(f"Could not set permissions on settings files: {e}")
 
         logger.info("Directory permissions set successfully")
 
@@ -173,13 +224,16 @@ async def lifespan(app: FastAPI):
     # Startup sequence - runs when the application starts
     init_db()  # Create database tables if they don't exist
 
+    # Initialize settings folder first - must happen before settings files are accessed
+    init_settings_folder()
+
     # Create all required directories if they don't exist
     os.makedirs("downloads", exist_ok=True)  # Video download storage
     os.makedirs("cookies", exist_ok=True)    # Cookie files for authenticated downloads
     os.makedirs("logs", exist_ok=True)       # Application logs
     os.makedirs("backups", exist_ok=True)    # Database backups (future use)
 
-    # Set proper file permissions on critical directories
+    # Set proper file permissions on critical directories and files
     set_directory_permissions()
 
     # Load and validate admin settings from admin_settings.json

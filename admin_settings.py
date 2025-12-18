@@ -12,8 +12,8 @@ from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
-# Location of the admin settings file on disk "folder/filename", not advisible to change actual filename
-ADMIN_SETTINGS_FILE = "admin_settings.json"
+# Location of the admin settings file on disk "folder/filename"
+ADMIN_SETTINGS_FILE = "settings/admin_settings.json"
 """
 Default settings, used when creating or merging settings files
 This application disables most settings by default, admins should be allowed full control over enabling features as needed.
