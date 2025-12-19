@@ -494,6 +494,7 @@
                     <button class="subsection-tab active" data-subsection="cleanup">Cleanup</button>
                     <button class="subsection-tab" data-subsection="database">Database</button>
                     <button class="subsection-tab" data-subsection="system-info">System Info</button>
+                    <button class="subsection-tab" data-subsection="system-power">System Power</button>
                 </div>
 
                 <!-- Cleanup Subsection (moved from Settings) -->
@@ -608,6 +609,78 @@
                     <button id="refresh-hardware-btn" class="btn btn-secondary" style="margin-top: 1rem;">
                         🔄 Refresh Hardware Info
                     </button>
+                </div>
+
+                <!-- System Power Subsection -->
+                <div id="system-power-subsection" class="subsection-content">
+                    <h3>System Power</h3>
+                    <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
+                        Restart the server application to apply configuration changes or recover from issues.
+                    </p>
+
+                    <!-- Warning Box -->
+                    <div class="warning-box" style="margin-bottom: 2rem; padding: 1rem; background: rgba(255, 193, 7, 0.1); border-left: 4px solid var(--warning); border-radius: 6px;">
+                        <strong>⚠️ Warning:</strong> Restarting the server will:
+                        <ul style="margin: 0.5rem 0 0 1.5rem;">
+                            <li>Interrupt active downloads and conversions (unless using graceful restart)</li>
+                            <li>Disconnect all connected users</li>
+                            <li>Operations will resume from database after restart</li>
+                        </ul>
+                    </div>
+
+                    <!-- Server Status -->
+                    <div id="server-status-info" style="margin-bottom: 2rem;">
+                        <h4 style="margin-bottom: 1rem;">Current Status</h4>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                            <div style="padding: 1rem; background: var(--glass-bg); border-radius: 8px;">
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.25rem;">Active Downloads</div>
+                                <div id="power-active-downloads" style="font-size: 1.5rem; font-weight: 600; color: var(--primary-color);">-</div>
+                            </div>
+                            <div style="padding: 1rem; background: var(--glass-bg); border-radius: 8px;">
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.25rem;">Active Conversions</div>
+                                <div id="power-active-conversions" style="font-size: 1.5rem; font-weight: 600; color: var(--primary-color);">-</div>
+                            </div>
+                            <div style="padding: 1rem; background: var(--glass-bg); border-radius: 8px;">
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.25rem;">Connected Users</div>
+                                <div id="power-connected-users" style="font-size: 1.5rem; font-weight: 600; color: var(--primary-color);">-</div>
+                            </div>
+                            <div style="padding: 1rem; background: var(--glass-bg); border-radius: 8px;">
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.25rem;">Uptime</div>
+                                <div id="power-uptime" style="font-size: 1.5rem; font-weight: 600; color: var(--primary-color);">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Restart Controls -->
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem;">
+                        <button id="graceful-restart-btn" class="btn btn-warning" style="background: var(--warning); color: white;">
+                            ⏳ Graceful Restart
+                        </button>
+                        <button id="force-restart-btn" class="btn btn-danger">
+                            ⚡ Force Restart
+                        </button>
+                        <button id="refresh-power-status-btn" class="btn btn-secondary">
+                            🔄 Refresh Status
+                        </button>
+                    </div>
+
+                    <!-- Info Box -->
+                    <div style="padding: 1rem; background: var(--glass-bg); border-radius: 6px; border-left: 4px solid var(--primary-color); margin-bottom: 1rem;">
+                        <p style="margin: 0; font-size: 0.9rem; color: var(--text-muted);">
+                            <strong>Graceful Restart:</strong> Waits for all active operations to complete before restarting. No data loss.<br>
+                            <strong>Force Restart:</strong> Restarts immediately. Active operations will resume from database.
+                        </p>
+                    </div>
+
+                    <!-- Restart Status -->
+                    <div id="restart-status" style="display: none; margin-top: 1.5rem; padding: 1rem; background: var(--glass-bg); border-radius: 8px; border-left: 4px solid var(--warning);">
+                        <p style="margin: 0; font-weight: 600;">
+                            <span id="restart-status-message">Server is restarting...</span>
+                        </p>
+                        <p style="margin: 0.5rem 0 0 0; color: var(--text-muted); font-size: 0.9rem;">
+                            <span id="restart-status-detail">This page will automatically reconnect when the server is ready.</span>
+                        </p>
+                    </div>
                 </div>
             </section>
 

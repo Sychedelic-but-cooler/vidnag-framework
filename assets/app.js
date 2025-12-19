@@ -4676,6 +4676,9 @@ async function loadSubsectionData(subsectionName) {
         case 'system-info':
             loadHardwareInfo();
             break;
+        case 'system-power':
+            loadPowerStatus();
+            break;
         case 'app-config':
             // Already preloaded in loadAllAppManagementSettings()
             break;
@@ -6320,6 +6323,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // System Power buttons
+    const gracefulRestartBtn = document.getElementById('graceful-restart-btn');
+    if (gracefulRestartBtn) {
+        gracefulRestartBtn.addEventListener('click', handleGracefulRestart);
+    }
+
+    const forceRestartBtn = document.getElementById('force-restart-btn');
+    if (forceRestartBtn) {
+        forceRestartBtn.addEventListener('click', handleForceRestart);
+    }
+
+    const refreshPowerStatusBtn = document.getElementById('refresh-power-status-btn');
+    if (refreshPowerStatusBtn) {
+        refreshPowerStatusBtn.addEventListener('click', loadPowerStatus);
+    }
+
     // Admin Settings - App Config
     const appConfigForm = document.getElementById('app-config-form');
     if (appConfigForm) {
@@ -6469,3 +6488,339 @@ window.addEventListener('beforeunload', () => {
     activeWebSockets.forEach(ws => ws.close());
     stopLogsPolling();
 });
+
+// ==================== SYSTEM POWER MANAGEMENT ====================
+
+/**
+ * Load system power status
+ */
+async function loadPowerStatus() {
+    try {
+        const response = await apiFetch('/api/admin/system/power-status');
+        if (!response.ok) {
+            throw new Error('Failed to load power status');
+        }
+
+        const data = await response.json();
+
+        // Update status display
+        document.getElementById('power-active-downloads').textContent = data.active_downloads || 0;
+        document.getElementById('power-active-conversions').textContent = data.active_conversions || 0;
+        document.getElementById('power-connected-users').textContent = data.connected_users || 0;
+        document.getElementById('power-uptime').textContent = formatUptime(data.uptime_seconds || 0);
+
+        // Return data for use by other functions
+        return data;
+    } catch (error) {
+        console.error('Error loading power status:', error);
+        showToast('Failed to load system status', 'error');
+        return null;
+    }
+}
+
+/**
+ * Format uptime in human-readable format
+ */
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+
+    return parts.join(' ');
+}
+
+/**
+ * Handle graceful server restart
+ */
+async function handleGracefulRestart() {
+    const btn = document.getElementById('graceful-restart-btn');
+    if (!btn) return;
+
+    // Load current status to check for active operations
+    const status = await loadPowerStatus();
+    if (!status) {
+        showToast('Could not fetch server status', 'error');
+        return;
+    }
+
+    const activeOps = (status.active_downloads || 0) + (status.active_conversions || 0);
+
+    // Confirmation dialog
+    let confirmMessage = 'Initiate graceful restart?\n\n';
+    if (activeOps > 0) {
+        confirmMessage += `The server will wait for ${activeOps} active operation(s) to complete before restarting.\n\n`;
+        confirmMessage += 'New downloads and conversions will be paused until restart completes.';
+    } else {
+        confirmMessage += 'No active operations. The server will restart immediately.';
+    }
+
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+
+    // Disable buttons
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Initiating...';
+    document.getElementById('force-restart-btn').disabled = true;
+
+    try {
+        // Send graceful restart request
+        const response = await apiFetch('/api/admin/system/restart-graceful', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to initiate graceful restart');
+        }
+
+        const result = await response.json();
+
+        // Show restart status
+        const statusDiv = document.getElementById('restart-status');
+        const statusMessage = document.getElementById('restart-status-message');
+        const statusDetail = document.getElementById('restart-status-detail');
+
+        statusDiv.style.display = 'block';
+
+        if (activeOps > 0) {
+            // Monitor graceful shutdown
+            statusMessage.textContent = 'Graceful shutdown initiated...';
+            statusDetail.textContent = `Waiting for ${activeOps} operation(s) to complete...`;
+            btn.textContent = 'Waiting...';
+
+            // Start monitoring
+            monitorGracefulShutdown();
+        } else {
+            // No active operations, restart immediately
+            statusMessage.textContent = 'Server is restarting...';
+            statusDetail.textContent = 'This page will automatically reconnect when the server is ready.';
+
+            // Wait a bit before polling
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            pollForServerRestart();
+        }
+
+    } catch (error) {
+        console.error('Error initiating graceful restart:', error);
+        showToast('Failed to initiate graceful restart: ' + error.message, 'error');
+
+        // Restore button state
+        btn.disabled = false;
+        btn.textContent = originalText;
+        document.getElementById('force-restart-btn').disabled = false;
+        document.getElementById('restart-status').style.display = 'none';
+    }
+}
+
+/**
+ * Monitor graceful shutdown progress
+ */
+async function monitorGracefulShutdown() {
+    const statusMessage = document.getElementById('restart-status-message');
+    const statusDetail = document.getElementById('restart-status-detail');
+    const maxAttempts = 300; // 10 minutes max (300 * 2 seconds)
+    let attempts = 0;
+
+    const checkStatus = async () => {
+        attempts++;
+
+        try {
+            // Try to fetch status
+            const response = await fetch('/api/admin/system/power-status', {
+                method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + localStorage.getItem('access_token')
+                },
+                cache: 'no-cache'
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const activeOps = (data.active_downloads || 0) + (data.active_conversions || 0);
+
+                if (activeOps === 0) {
+                    // All operations complete, shutdown should happen soon
+                    statusMessage.textContent = 'All operations complete, restarting now...';
+                    statusDetail.textContent = 'Waiting for server to restart...';
+
+                    // Wait a bit then start polling for restart
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    pollForServerRestart();
+                    return; // Stop monitoring
+                } else {
+                    // Update countdown
+                    statusMessage.textContent = 'Graceful shutdown in progress...';
+                    statusDetail.textContent = `Waiting for ${activeOps} operation(s) to complete...`;
+                }
+            }
+        } catch (e) {
+            // Server might be shutting down, start polling for restart
+            console.log('Server may be shutting down, starting restart polling...');
+            statusMessage.textContent = 'Server is restarting...';
+            statusDetail.textContent = 'Waiting for server to come back online...';
+            pollForServerRestart();
+            return; // Stop monitoring
+        }
+
+        if (attempts >= maxAttempts) {
+            // Timeout
+            statusMessage.textContent = 'Graceful shutdown timeout';
+            statusDetail.textContent = 'Operations are taking longer than expected. Please check manually.';
+            showToast('Graceful shutdown is taking longer than expected', 'warning');
+            return; // Stop monitoring
+        }
+
+        // Continue monitoring after 2 seconds
+        setTimeout(checkStatus, 2000);
+    };
+
+    // Start monitoring
+    checkStatus();
+}
+
+/**
+ * Handle force server restart
+ */
+async function handleForceRestart() {
+    const btn = document.getElementById('force-restart-btn');
+    if (!btn) return;
+
+    // Load current status to warn about active operations
+    const status = await loadPowerStatus();
+    const activeOps = status ? ((status.active_downloads || 0) + (status.active_conversions || 0)) : 0;
+
+    // Strong confirmation dialog
+    let confirmMessage = '⚠️ FORCE RESTART WARNING ⚠️\n\n';
+    if (activeOps > 0) {
+        confirmMessage += `There are ${activeOps} active operation(s) that will be INTERRUPTED.\n\n`;
+        confirmMessage += 'These operations will resume from the database after restart, but may need to re-download partial content.\n\n';
+    }
+    confirmMessage += 'This will:\n';
+    confirmMessage += '- Immediately disconnect all users\n';
+    confirmMessage += '- Terminate all active processes\n';
+    confirmMessage += '- Restart the server without waiting\n\n';
+    confirmMessage += 'Are you sure you want to FORCE RESTART?';
+
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+
+    // Disable buttons and show loading state
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Forcing Restart...';
+    document.getElementById('graceful-restart-btn').disabled = true;
+
+    // Show restart status
+    const statusDiv = document.getElementById('restart-status');
+    const statusMessage = document.getElementById('restart-status-message');
+    const statusDetail = document.getElementById('restart-status-detail');
+
+    statusDiv.style.display = 'block';
+    statusMessage.textContent = 'Server is restarting...';
+    statusDetail.textContent = 'This page will automatically reconnect when the server is ready.';
+
+    try {
+        // Send force restart request
+        const response = await apiFetch('/api/admin/system/restart-force', {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to initiate force restart');
+        }
+
+        const result = await response.json();
+
+        // Wait a few seconds before starting to poll
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Start polling for server availability
+        pollForServerRestart();
+
+    } catch (error) {
+        console.error('Error forcing restart:', error);
+
+        // Check if it's a network error (server already shutting down)
+        if (error.message.includes('fetch') || error.message.includes('network')) {
+            // Server is probably shutting down, start polling
+            statusMessage.textContent = 'Server shutdown initiated...';
+            statusDetail.textContent = 'Waiting for server to restart...';
+
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            pollForServerRestart();
+        } else {
+            showToast('Failed to force restart: ' + error.message, 'error');
+
+            // Restore button state
+            btn.disabled = false;
+            btn.textContent = originalText;
+            document.getElementById('graceful-restart-btn').disabled = false;
+            statusDiv.style.display = 'none';
+        }
+    }
+}
+
+/**
+ * Poll for server restart completion
+ */
+async function pollForServerRestart() {
+    const maxAttempts = 120; // 120 attempts = 2 minutes
+    let attempts = 0;
+
+    const statusMessage = document.getElementById('restart-status-message');
+    const statusDetail = document.getElementById('restart-status-detail');
+
+    const checkServer = async () => {
+        attempts++;
+
+        // Update countdown
+        statusDetail.textContent = `Checking server status (${attempts}/${maxAttempts})...`;
+
+        try {
+            // Try to fetch the health endpoint
+            const response = await fetch('/api/health', {
+                method: 'GET',
+                cache: 'no-cache'
+            });
+
+            if (response.ok) {
+                // Server is back!
+                statusMessage.textContent = 'Server restarted successfully!';
+                statusDetail.textContent = 'Reloading page in 2 seconds...';
+
+                showToast('Server restarted successfully!', 'success');
+
+                // Reload the page after a short delay
+                setTimeout(() => {
+                    window.location.reload();
+                }, 2000);
+
+                return; // Stop polling
+            }
+        } catch (e) {
+            // Server not ready yet, continue polling
+            console.log(`Polling attempt ${attempts} failed, server not ready yet`);
+        }
+
+        if (attempts >= maxAttempts) {
+            // Timeout
+            statusMessage.textContent = 'Restart timed out';
+            statusDetail.textContent = 'The server may still be restarting. Please refresh the page manually.';
+            showToast('Server restart timed out. Please refresh the page manually.', 'warning');
+            return; // Stop polling
+        }
+
+        // Continue polling after 1 second
+        setTimeout(checkServer, 1000);
+    };
+
+    // Start polling
+    checkServer();
+}

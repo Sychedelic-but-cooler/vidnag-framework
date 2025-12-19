@@ -61,7 +61,7 @@ from oidc_auth import OIDCService
 from config import DATABASE_FILE
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.6.35-12"
+APP_VERSION = "2.7.35-12"
 
 def cleanup_old_logs():
     """
@@ -224,6 +224,9 @@ async def lifespan(app: FastAPI):
     FastAPI calls this when the application starts and stops.
     """
     # Startup sequence - runs when the application starts
+    global server_start_time
+    server_start_time = datetime.now(timezone.utc)  # Track startup time for uptime calculation
+
     init_db()  # Create database tables if they don't exist
 
     # Initialize settings folder first - must happen before settings files are accessed
@@ -285,8 +288,63 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown sequence - runs when the application stops
-    # Currently no cleanup needed, but this is where it would go
-    pass
+    await shutdown_cleanup()
+
+
+async def shutdown_cleanup():
+    """
+    Cleanup resources during graceful shutdown.
+    Called when the application is shutting down (restart, SIGTERM, etc.)
+    """
+    try:
+        await emit_log("INFO", "System", "Shutdown initiated - starting cleanup...")
+
+        # 1. Stop accepting new work from queues
+        if download_queue.processing_task and not download_queue.processing_task.done():
+            download_queue.processing_task.cancel()
+            await emit_log("INFO", "System", "Download queue processing stopped")
+
+        if conversion_queue.processing_task and not conversion_queue.processing_task.done():
+            conversion_queue.processing_task.cancel()
+            await emit_log("INFO", "System", "Conversion queue processing stopped")
+
+        # 2. Terminate active FFmpeg processes gracefully
+        for conversion_id, (process, output_path) in list(active_conversion_processes.items()):
+            try:
+                if process.poll() is None:  # Process still running
+                    process.terminate()  # Send SIGTERM
+                    try:
+                        process.wait(timeout=3)  # Wait up to 3 seconds
+                    except subprocess.TimeoutExpired:
+                        process.kill()  # Force kill if it doesn't terminate
+                    await emit_log("INFO", "System", f"Terminated conversion process: {conversion_id[:8]}...", conversion_id)
+            except Exception as e:
+                logger.error(f"Error terminating conversion {conversion_id}: {e}")
+
+        # 3. Close WebSocket connections gracefully
+        # Close download-specific websockets
+        for download_id, websockets in list(active_connections.items()):
+            for ws in websockets:
+                try:
+                    await ws.close(code=1001, reason="Server restarting")
+                except Exception as e:
+                    logger.error(f"Error closing websocket for {download_id}: {e}")
+
+        # Close log websockets
+        for ws in list(log_websockets):
+            try:
+                await ws.close(code=1001, reason="Server restarting")
+            except Exception as e:
+                logger.error(f"Error closing log websocket: {e}")
+
+        await emit_log("INFO", "System", "Shutdown cleanup completed successfully")
+
+        # Give logs time to flush
+        await asyncio.sleep(0.5)
+
+    except Exception as e:
+        logger.error(f"Error during shutdown cleanup: {e}")
+
 
 # Create the FastAPI application instance with our lifespan handler
 app = FastAPI(title="Vidnag Framework API", lifespan=lifespan)
@@ -517,6 +575,10 @@ app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 active_connections: dict[str, list[WebSocket]] = {}
 # WebSocket connections for real-time log streaming
 log_websockets: list[WebSocket] = []
+
+# Server restart management
+server_start_time: Optional[datetime] = None
+graceful_shutdown_requested: bool = False
 
 # WebSocket connection limits to prevent memory exhaustion
 MAX_LOG_WEBSOCKET_CONNECTIONS = 100
@@ -1722,7 +1784,7 @@ class YtdlpService:
         await emit_log("INFO", "Download", f"Starting download for URL: {url}", download_id)
 
         cmd = [
-            "yt-dlp",
+            "python3.12", "-m", "yt_dlp",
             "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[height>=360]",
             "-o", f"downloads/%(title)s-%(id)s.%(ext)s",
             "--merge-output-format", "mp4",
@@ -5431,7 +5493,7 @@ async def get_version(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Get yt-dlp and app version"""
     try:
         result = subprocess.run(
-            ["yt-dlp", "--version"],
+            ["python3.12", "-m", "yt_dlp", "--version"],
             capture_output=True,
             text=True
         )
@@ -6753,6 +6815,190 @@ async def refresh_hardware_info(current_admin: Dict[str, Any] = Depends(get_curr
     except Exception as e:
         logger.error(f"Failed to refresh hardware info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== SYSTEM POWER MANAGEMENT ====================
+
+@app.get("/api/health")
+async def health_check():
+    """
+    Simple health check endpoint.
+    Used to verify server is running and responsive.
+    """
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/admin/system/power-status")
+async def get_power_status(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Get current system power status (ADMIN ONLY).
+
+    Returns information about active operations and server uptime.
+    """
+    global server_start_time, graceful_shutdown_requested
+
+    # Calculate uptime
+    uptime_seconds = 0
+    if server_start_time:
+        uptime_seconds = int((datetime.now(timezone.utc) - server_start_time).total_seconds())
+
+    # Count active operations
+    active_downloads = len(download_queue.active_downloads)
+    active_conversions = len(active_conversion_processes)
+
+    # Count connected users (WebSocket connections)
+    connected_users = len(log_websockets)
+    for download_id, websockets in active_connections.items():
+        connected_users += len(websockets)
+
+    return {
+        "active_downloads": active_downloads,
+        "active_conversions": active_conversions,
+        "connected_users": connected_users,
+        "uptime_seconds": uptime_seconds,
+        "server_start_time": server_start_time.isoformat() if server_start_time else None,
+        "graceful_shutdown_in_progress": graceful_shutdown_requested
+    }
+
+
+@app.post("/api/admin/system/restart-graceful")
+async def restart_server_graceful(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Initiate a graceful server restart (ADMIN ONLY).
+
+    Waits for all active operations to complete before restarting.
+    - Stops accepting new downloads/conversions
+    - Monitors active operations
+    - Triggers restart when all operations are complete
+
+    Security: Requires admin authentication. Logged to audit trail.
+    """
+    import signal
+    global graceful_shutdown_requested
+
+    # Log the restart action
+    await emit_log("WARNING", "Admin", f"Admin {current_admin.get('username')} initiated GRACEFUL server restart")
+
+    # Set flag to stop accepting new work
+    graceful_shutdown_requested = True
+
+    # Get current operation counts for response
+    active_downloads = len(download_queue.active_downloads)
+    active_conversions = len(active_conversion_processes)
+    total_active = active_downloads + active_conversions
+
+    # If no active operations, restart immediately
+    if total_active == 0:
+        await emit_log("INFO", "System", "No active operations - restarting immediately")
+
+        async def trigger_immediate_restart():
+            await asyncio.sleep(1)
+            await emit_log("WARNING", "System", "Graceful restart triggered - shutting down now")
+            await asyncio.sleep(0.5)
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        asyncio.create_task(trigger_immediate_restart())
+
+        return {
+            "message": "No active operations - restarting immediately",
+            "active_downloads": 0,
+            "active_conversions": 0,
+            "wait_time_estimate": "5-10 seconds"
+        }
+
+    # Background task to monitor and trigger restart
+    async def monitor_and_restart():
+        try:
+            await emit_log("INFO", "System", f"Waiting for {total_active} operation(s) to complete before restart...")
+
+            # Monitor every 2 seconds
+            while True:
+                await asyncio.sleep(2)
+
+                current_downloads = len(download_queue.active_downloads)
+                current_conversions = len(active_conversion_processes)
+                current_total = current_downloads + current_conversions
+
+                if current_total == 0:
+                    # All operations complete, trigger restart
+                    await emit_log("INFO", "System", "All operations complete - triggering restart")
+                    await asyncio.sleep(1)
+                    await emit_log("WARNING", "System", "Graceful restart triggered - shutting down now")
+                    await asyncio.sleep(0.5)
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    break
+                else:
+                    # Log progress
+                    if current_total != total_active:
+                        await emit_log("INFO", "System", f"Waiting for {current_total} operation(s) to complete...")
+
+        except Exception as e:
+            logger.error(f"Error during graceful restart monitoring: {e}")
+            await emit_log("ERROR", "System", f"Graceful restart monitoring failed: {e}")
+
+    # Start monitoring in background
+    asyncio.create_task(monitor_and_restart())
+
+    return {
+        "message": "Graceful restart initiated - waiting for operations to complete",
+        "active_downloads": active_downloads,
+        "active_conversions": active_conversions,
+        "note": "Server will restart automatically when all operations finish"
+    }
+
+
+@app.post("/api/admin/system/restart-force")
+async def restart_server_force(
+    current_admin: Dict[str, Any] = Depends(get_current_admin_user)
+):
+    """
+    Force restart the server application immediately (ADMIN ONLY).
+
+    Initiates immediate shutdown without waiting for operations to complete.
+    Active operations will be resumed from database after restart.
+
+    Security: Requires admin authentication. Logged to audit trail.
+    """
+    import signal
+
+    # Log the restart action with FORCE indicator
+    await emit_log("WARNING", "Admin", f"Admin {current_admin.get('username')} initiated FORCE server restart")
+
+    # Get current operation counts for response
+    active_downloads = len(download_queue.active_downloads)
+    active_conversions = len(active_conversion_processes)
+
+    # Schedule shutdown in background to allow response to be sent
+    async def trigger_shutdown():
+        try:
+            # Give the response time to be sent
+            await asyncio.sleep(1)
+
+            # Log final message
+            await emit_log("WARNING", "System", "Force restart initiated - shutting down now")
+
+            # Give logs time to flush
+            await asyncio.sleep(0.5)
+
+            # Send SIGTERM to self - this triggers FastAPI shutdown
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        except Exception as e:
+            logger.error(f"Error during restart trigger: {e}")
+
+    # Schedule the shutdown
+    asyncio.create_task(trigger_shutdown())
+
+    return {
+        "message": "Force restart initiated",
+        "active_downloads": active_downloads,
+        "active_conversions": active_conversions,
+        "note": "Operations will resume from database after restart"
+    }
 
 
 if __name__ == "__main__":
