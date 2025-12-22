@@ -18,6 +18,7 @@ from sqlalchemy import text
 
 # Date and time handling
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 # Type hints for better code clarity
 from typing import Optional, List, Dict, Any
@@ -304,12 +305,6 @@ async def shutdown_cleanup():
                 except Exception as e:
                     logger.error(f"Error closing websocket for {download_id}: {e}")
 
-        # 4. Close Logging WebSockets Gracefully
-        for ws in list(log_websockets):
-            try:
-                await ws.close(code=1001, reason="Server restarting")
-            except Exception as e:
-                logger.error(f"Error closing log websocket: {e}")
 
         await emit_log("INFO", "System", "Shutdown cleanup completed successfully")
 
@@ -519,18 +514,15 @@ async def trust_proxy_headers(request: Request, call_next):
 # Mount static files to be served by FastAPI
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
-# WebSocket connections per download for real-time updates
+#WebSocket Connection Management
 active_connections: dict[str, list[WebSocket]] = {}
-# WebSocket connections for real-time log streaming
-log_websockets: list[WebSocket] = []
 
 # Server Restart Management
 server_start_time: Optional[datetime] = None
 graceful_shutdown_requested: bool = False
 
-# WebSocket connection limits to prevent memory exhaustion
-MAX_LOG_WEBSOCKET_CONNECTIONS = 100
-WEBSOCKET_IDLE_TIMEOUT = 300  # Disconnet Idle WebSocket Connections
+# WebSocket connection limits to prevent memory exhaustion (for download progress only)
+WEBSOCKET_IDLE_TIMEOUT = 300  # Disconnect Idle WebSocket Connections
 
 # Admin logs: system management, security, user operations
 admin_log_buffer = deque(maxlen=1000)
@@ -1205,22 +1197,7 @@ async def emit_log(level: str, component: str, message: str, download_id: Option
         logger.info(f"[LOG #{emit_log.call_count}] {log_type} | {level} | {component} | {message[:100]}")
         logger.info(f"[LOG] Sequences - Admin: {admin_log_sequence}, User: {user_log_sequence}")
 
-    # Note: Currently WebSocket logging is not used, switched to HTTP polling for log streaming
-    disconnected = []
-    for ws in log_websockets:
-        try:
-            # Send the appropriate log entry (prefer specific over legacy)
-            ws_entry = log_entry if (is_admin_log or is_user_log) else legacy_entry
-            await ws.send_json(ws_entry.model_dump())
-        except Exception as e:
-            logger.error(f"[LOG] Failed to send to WebSocket: {e}")
-            disconnected.append(ws)
 
-    # Remove any disconnected WebSocket clients
-    for ws in disconnected:
-        if ws in log_websockets:
-            log_websockets.remove(ws)
-            logger.info(f"[LOG] Removed disconnected WebSocket. Remaining: {len(log_websockets)}")
 
 
 # Pydantic schemas for API request/response validation
@@ -5018,74 +4995,7 @@ async def get_logs(
     }
 
 
-@app.websocket("/ws/logs")
-async def logs_websocket(websocket: WebSocket):
-    # WebSocket endpoint for real-time log streaming
-    logger.info(f"[DEBUG] WebSocket connection attempt from {websocket.client}")
-    
-    # Enforce maximum WebSocket connections to prevent memory exhaustion
-    if len(log_websockets) >= MAX_LOG_WEBSOCKET_CONNECTIONS:
-        await websocket.close(code=1008, reason="Server at max WebSocket capacity")
-        logger.warning(f"[DEBUG] WebSocket connection rejected - max capacity ({MAX_LOG_WEBSOCKET_CONNECTIONS}) reached")
-        await emit_log("WARNING", "System", f"WebSocket connection rejected - max capacity reached from {websocket.client}")
-        return
-    
-    await websocket.accept()
-    logger.info(f"[DEBUG] WebSocket accepted, adding to log_websockets list")
-    log_websockets.append(websocket)
-    logger.info(f"[DEBUG] Total WebSocket clients: {len(log_websockets)}")
 
-    await emit_log("INFO", "System", "Log viewer connected")
-
-    try:
-        # Send existing logs
-        logger.info(f"[DEBUG] Sending {len(log_buffer)} buffered logs to new client")
-        for log in log_buffer:
-            await websocket.send_json(log)
-
-        # Keep connection alive with heartbeat and idle timeout
-        # The emit_log function will send new logs to all connected clients
-        # We just need to keep this connection alive by sending periodic pings
-        idle_timeout_task = None
-        last_activity = datetime.now(timezone.utc)
-        
-        while True:
-            try:
-                # Send ping every 30 seconds to keep connection alive
-                await asyncio.sleep(30)
-                
-                # Check for idle timeout (client hasn't received messages in WEBSOCKET_IDLE_TIMEOUT seconds)
-                now = datetime.now(timezone.utc)
-                if (now - last_activity).total_seconds() > WEBSOCKET_IDLE_TIMEOUT:
-                    logger.info(f"[DEBUG] WebSocket idle timeout: {websocket.client}")
-                    break
-                
-                await websocket.send_json({"type": "ping", "timestamp": now.isoformat()})
-                last_activity = now
-            except asyncio.CancelledError:
-                logger.info(f"[DEBUG] WebSocket cancelled: {websocket.client}")
-                raise
-            except Exception as e:
-                logger.error(f"[DEBUG] Error in logs WebSocket loop: {e}")
-                break
-
-    except WebSocketDisconnect:
-        logger.info(f"[DEBUG] WebSocket disconnected")
-    except Exception as e:
-        logger.error(f"[DEBUG] WebSocket error: {e}")
-    finally:
-        # Ensure proper cleanup of WebSocket connection
-        if websocket in log_websockets:
-            log_websockets.remove(websocket)
-            logger.info(f"[DEBUG] Removed WebSocket from list. Remaining: {len(log_websockets)}")
-        
-        # Clean up any references
-        try:
-            await websocket.close()
-        except Exception:
-            pass  # Already closed
-        
-        # Don't emit log here as it might cause issues during shutdown
 
 
 @app.get("/api/settings/version", response_model=VersionInfo)
@@ -5679,6 +5589,7 @@ def generate_share_error_page(title: str, message: str, emoji: str = "❌") -> s
     """
 
 
+
 @app.get("/share/{token}")
 async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
     # Public endpoint to view a shared video, anyone with the link can view.
@@ -5735,111 +5646,31 @@ async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
     share.last_viewed_at = datetime.now(timezone.utc)
     db.commit()
 
-    # Return HTML page with embedded video player, get video and thumbnail URLs
+    # Prepare variables for template substitution
     thumbnail_url = f"/share/{token}/thumbnail" if download.thumbnail else None
+    poster_attr = f'poster="{escape(thumbnail_url)}"' if thumbnail_url else ""
+    video_url = f"/share/{token}/video"
+    filename = download.filename or 'Shared Video'
+    view_count = str(share.view_count)
+    created_at = share.created_at.strftime('%Y-%m-%d %H:%M UTC')
 
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{download.filename or 'Shared Video'}</title>
-        <style>
-            * {{
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }}
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: #0a0a0a;
-                background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
-                color: #ffffff;
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-            }}
-            .container {{
-                max-width: 1200px;
-                width: 100%;
-                background: rgba(255, 255, 255, 0.05);
-                backdrop-filter: blur(10px);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 20px;
-                padding: 30px;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-            }}
-            h1 {{
-                font-size: 1.8rem;
-                margin-bottom: 20px;
-                background: linear-gradient(135deg, #00FFFF, #FF1493);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
-            }}
-            video {{
-                width: 100%;
-                max-height: 70vh;
-                border-radius: 10px;
-                background: #000;
-                border: 1px solid rgba(0, 255, 255, 0.3);
-            }}
-            .info {{
-                margin-top: 20px;
-                padding: 15px;
-                background: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 10px;
-                display: flex;
-                gap: 20px;
-                flex-wrap: wrap;
-            }}
-            .info p {{
-                margin: 0;
-                color: #cccccc;
-            }}
-            .info strong {{
-                color: #00FFFF;
-            }}
-            .powered-by {{
-                margin-top: 20px;
-                text-align: center;
-                color: #666;
-                font-size: 0.9rem;
-            }}
-            .powered-by a {{
-                color: #00FFFF;
-                text-decoration: none;
-                transition: color 0.3s ease;
-            }}
-            .powered-by a:hover {{
-                color: #FF1493;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>{download.filename or 'Shared Video'}</h1>
-            <video controls {"poster='" + thumbnail_url + "'" if thumbnail_url else ""}>
-                <source src="/share/{token}/video" type="video/mp4">
-                Your browser does not support the video tag.
-            </video>
-            <div class="info">
-                <p><strong>Views:</strong> {share.view_count}</p>
-                <p><strong>Shared:</strong> {share.created_at.strftime('%Y-%m-%d %H:%M UTC')}</p>
-            </div>
-            <div class="powered-by">
-                Powered by <a href="/">Vidnag Framework</a>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
+    # Load the static template and safely substitute placeholders
+    try:
+        with open(os.path.join("assets", "share.html"), 'r', encoding='utf-8') as f:
+            tmpl = f.read()
+    except Exception as e:
+        return HTMLResponse(content=generate_share_error_page("Template Error", "Unable to load share page template."), status_code=500)
 
-    return HTMLResponse(content=html_content)
+    rendered = (
+        tmpl
+        .replace("__FILENAME__", escape(filename))
+        .replace("__POSTER_ATTR__", poster_attr)
+        .replace("__VIDEO_URL__", escape(video_url))
+        .replace("__VIEW_COUNT__", escape(view_count))
+        .replace("__CREATED_AT__", escape(created_at))
+    )
+
+    return HTMLResponse(content=rendered)
 
 
 @app.get("/share/{token}/video")
@@ -6812,10 +6643,9 @@ async def get_power_status(
     active_downloads = len(download_queue.active_downloads)
     active_conversions = len(active_conversion_processes)
 
-    # Count connected users (WebSocket connections)
-    connected_users = len(log_websockets)
-    for download_id, websockets in active_connections.items():
-        connected_users += len(websockets)
+
+    # Count connected users (WebSocket connections for downloads only)
+    connected_users = sum(len(websockets) for websockets in active_connections.values())
 
     return {
         "active_downloads": active_downloads,
