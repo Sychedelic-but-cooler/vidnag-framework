@@ -203,11 +203,20 @@
         <!-- Settings Tab -->
         <div id="settings-tab" class="tab-content">
             <section class="version-info glass-card">
-                <h2>yt-dlp Settings</h2>
+                <h2>Version Information</h2>
+                <!-- Python Version Warning Banner -->
+                <div id="python-version-warning" class="warning-box" style="display: none; margin-bottom: 1.5rem; padding: 1rem; background: rgba(255, 193, 7, 0.1); border-left: 4px solid var(--warning); border-radius: 6px;">
+                    <strong>⚠️ Warning: Python version is below 3.10</strong>
+                    <p style="margin: 0.5rem 0 0 0;">yt-dlp requires Python 3.10 or higher. Please upgrade your Python installation to ensure compatibility.</p>
+                </div>
                 <div class="info-grid">
                     <div class="info-item">
                         <span class="info-label">Vidnag App Version:</span>
                         <span class="info-value" id="app-version">Loading...</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Python Version:</span>
+                        <span class="info-value" id="python-version">Loading...</span>
                     </div>
                     <div class="info-item">
                         <span class="info-label">yt-dlp Version:</span>

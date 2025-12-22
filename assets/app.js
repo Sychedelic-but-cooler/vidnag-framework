@@ -1866,6 +1866,15 @@ async function loadVersionInfo() {
         const data = await response.json();
         document.getElementById('app-version').textContent = data.app_version;
         document.getElementById('ytdlp-version').textContent = data.ytdlp_version;
+        document.getElementById('python-version').textContent = data.python_version;
+
+        // Show warning banner if Python version is below 3.10
+        const warningBanner = document.getElementById('python-version-warning');
+        if (data.python_version_warning) {
+            warningBanner.style.display = 'block';
+        } else {
+            warningBanner.style.display = 'none';
+        }
 
     } catch (error) {
         showToast('Failed to load version info', 'error');

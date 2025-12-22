@@ -29,6 +29,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 import asyncio
 import subprocess
+import sys
 import os
 import shutil
 import json
@@ -1482,6 +1483,8 @@ class VersionInfo(BaseModel):
     """System version information"""
     ytdlp_version: str                      # yt-dlp version string
     app_version: str                        # Application version
+    python_version: str                     # Python version string
+    python_version_warning: bool = False    # True if Python version < 3.10
 
 
 class DiskSpaceInfo(BaseModel):
@@ -1791,7 +1794,7 @@ class YtdlpService:
         await emit_log("INFO", "Playlist", f"Starting playlist extraction with yt-dlp")
 
         cmd = [
-            "python3.12", "-m", "yt_dlp",
+            sys.executable, "-m", "yt_dlp",
             "--flat-playlist",  # Don't download, just list
             "--yes-playlist",   # Explicitly process as playlist
             "--get-url",        # Get video URLs (more reliable than --print url)
@@ -1884,7 +1887,7 @@ class YtdlpService:
         await emit_log("INFO", "Download", f"Starting download for URL: {url}", download_id)
 
         cmd = [
-            "python3.12", "-m", "yt_dlp",
+            sys.executable, "-m", "yt_dlp",
             "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[height>=360]",
             "-o", f"downloads/%(title)s-%(id)s.%(ext)s",
             "--merge-output-format", "mp4",
@@ -5653,10 +5656,10 @@ async def logs_websocket(websocket: WebSocket):
 
 @app.get("/api/settings/version", response_model=VersionInfo)
 async def get_version(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Get yt-dlp and app version"""
+    """Get yt-dlp, Python, and app version"""
     try:
         result = subprocess.run(
-            ["python3.12", "-m", "yt_dlp", "--version"],
+            [sys.executable, "-m", "yt_dlp", "--version"],
             capture_output=True,
             text=True
         )
@@ -5664,9 +5667,19 @@ async def get_version(current_user: Dict[str, Any] = Depends(get_current_user)):
     except Exception:
         ytdlp_version = "unknown"
 
+    # Get Python version from the running interpreter (not system python3)
+    # This ensures we check the version actually running the app (e.g., in a venv)
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+    # Check if Python version is below 3.10
+    python_version_warning = (sys.version_info.major < 3 or
+                             (sys.version_info.major == 3 and sys.version_info.minor < 10))
+
     return VersionInfo(
         ytdlp_version=ytdlp_version,
-        app_version=APP_VERSION
+        app_version=APP_VERSION,
+        python_version=python_version,
+        python_version_warning=python_version_warning
     )
 
 
@@ -5753,10 +5766,10 @@ async def update_ytdlp(current_admin: Dict[str, Any] = Depends(get_current_admin
     try:
         await emit_log("INFO", "System", "Starting yt-dlp update")
 
-        # Security: Use python3.12 -m pip instead of direct pip command
+        # Security: Use sys.executable -m pip instead of direct pip command
         # Security: Hardcode the package name to prevent injection
         result = subprocess.run(
-            ["python3.12", "-m", "pip", "install", "--upgrade", "yt-dlp"],
+            [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
             capture_output=True,
             text=True,
             timeout=60  # Security: Add timeout
