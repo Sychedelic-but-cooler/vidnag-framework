@@ -1,12 +1,5 @@
 """
 Authentication Services for Vidnag Framework
-
-This module provides comprehensive authentication functionality including:
-- Password hashing and verification (bcrypt)
-- JWT token generation and validation
-- Account lockout after failed attempts
-- Suspicious IP activity detection
-- Authentication audit logging
 """
 
 import bcrypt
@@ -22,38 +15,17 @@ from database import User, UserLoginHistory, JWTKey, FailedLoginAttempt, AuthAud
 
 
 class PasswordService:
-    """
-    Service for secure password hashing and verification using bcrypt.
-    Uses cost factor 12 for a good balance of security and performance.
-    """
-
+    # Service for secure password hashing and verification using bcrypt.
     @staticmethod
     def hash_password(password: str) -> str:
-        """
-        Hash a password using bcrypt with cost factor 12.
-
-        Args:
-            password: Plain text password to hash
-
-        Returns:
-            Base64-encoded bcrypt hash
-        """
+        # Hash a password using bcrypt with a salt.
         salt = bcrypt.gensalt(rounds=12)
         password_hash = bcrypt.hashpw(password.encode('utf-8'), salt)
         return password_hash.decode('utf-8')
 
     @staticmethod
     def verify_password(password: str, password_hash: str) -> bool:
-        """
-        Verify a password against its hash using constant-time comparison.
-
-        Args:
-            password: Plain text password to verify
-            password_hash: Bcrypt hash to compare against
-
-        Returns:
-            True if password matches, False otherwise
-        """
+        # Verify a password against its hash using constant-time comparison.
         try:
             return bcrypt.checkpw(
                 password.encode('utf-8'),
@@ -64,32 +36,13 @@ class PasswordService:
 
 
 class JWTService:
-    """
-    Service for JWT token generation, validation, and key rotation.
-    Implements automatic key rotation for enhanced security.
-    """
-
+    # Service for JWT token generation, validation, and key rotation.
     @staticmethod
     def generate_secret_key() -> str:
-        """
-        Generate a cryptographically secure random key for JWT signing.
-
-        Returns:
-            Base64-encoded 512-bit random key
-        """
         return base64.b64encode(secrets.token_bytes(64)).decode('utf-8')
 
     @staticmethod
     def get_active_key(db: Session) -> Optional[JWTKey]:
-        """
-        Get the currently active JWT signing key.
-
-        Args:
-            db: Database session
-
-        Returns:
-            Active JWTKey or None if no active key exists
-        """
         return db.query(JWTKey).filter(
             JWTKey.is_active == True,
             JWTKey.expires_at > datetime.now(timezone.utc)
@@ -97,16 +50,7 @@ class JWTService:
 
     @staticmethod
     def create_new_key(db: Session, admin_settings) -> JWTKey:
-        """
-        Create a new JWT signing key with configured expiry.
-
-        Args:
-            db: Database session
-            admin_settings: Application admin settings
-
-        Returns:
-            Newly created JWTKey
-        """
+        # Create a new JWT signing key with configured expiry.
         key_value = JWTService.generate_secret_key()
         expires_at = datetime.now(timezone.utc) + timedelta(
             days=admin_settings.auth.jwt_key_rotation_days
@@ -124,19 +68,8 @@ class JWTService:
 
     @staticmethod
     def rotate_keys_if_needed(db: Session, admin_settings) -> JWTKey:
-        """
-        Check if key rotation is needed and rotate if necessary.
-        Rotates when key expires within 1 day (grace period).
-
-        Args:
-            db: Database session
-            admin_settings: Application admin settings
-
-        Returns:
-            Active JWTKey (either existing or newly created)
-        """
+        # Check if key rotation is needed and rotate if necessary or if expiry time is < 1 day.
         active_key = JWTService.get_active_key(db)
-
         if not active_key:
             # No active key exists, create one
             return JWTService.create_new_key(db, admin_settings)
@@ -162,20 +95,7 @@ class JWTService:
         db: Session,
         admin_settings
     ) -> str:
-        """
-        Create a JWT access token for a user.
-
-        Args:
-            user_id: User's unique ID
-            username: Username
-            is_admin: Whether user has admin privileges
-            db: Database session
-            admin_settings: Application admin settings
-
-        Returns:
-            JWT token string
-        """
-        # Ensure we have an active key
+        # Create a JWT access token for a user and ensure we have an active key
         jwt_key = JWTService.rotate_keys_if_needed(db, admin_settings)
 
         # Create token payload
@@ -189,7 +109,7 @@ class JWTService:
             "is_admin": is_admin,
             "exp": expiry,  # Expiration time
             "iat": datetime.now(timezone.utc),  # Issued at
-            "jti": str(uuid.uuid4())  # JWT ID (unique token identifier)
+            "jti": str(uuid.uuid4())  # JWT ID
         }
 
         # Sign and return token
@@ -201,17 +121,7 @@ class JWTService:
 
     @staticmethod
     def decode_token(token: str, db: Session, admin_settings) -> Optional[Dict[str, Any]]:
-        """
-        Decode and validate a JWT token.
-
-        Args:
-            token: JWT token string
-            db: Database session
-            admin_settings: Application admin settings
-
-        Returns:
-            Token payload dict if valid, None otherwise
-        """
+        # Decode and validate a JWT token.
         try:
             # Get active key
             jwt_key = JWTService.get_active_key(db)
@@ -233,23 +143,10 @@ class JWTService:
 
 
 class AuthService:
-    """
-    Service for authentication operations including login, lockout, and IP tracking.
-    """
-
+    # Service for authentication operations including login, lockout, and IP tracking.
     @staticmethod
     def check_account_lockout(username: str, db: Session) -> Tuple[bool, Optional[datetime]]:
-        """
-        Check if account is locked due to failed login attempts.
-
-        Args:
-            username: Username to check
-            db: Database session
-
-        Returns:
-            Tuple of (is_locked, lockout_until datetime)
-        """
-        # Get most recent failed attempt with lockout
+        # Check if account is locked due to failed login attempts.
         recent_lockout = db.query(FailedLoginAttempt).filter(
             FailedLoginAttempt.username == username,
             FailedLoginAttempt.lockout_until.isnot(None),
@@ -268,19 +165,7 @@ class AuthService:
         db: Session,
         admin_settings
     ) -> bool:
-        """
-        Record a failed login attempt and lock account if threshold reached.
-
-        Args:
-            username: Username that failed to login
-            ip_address: IP address of attempt
-            db: Database session
-            admin_settings: Application admin settings
-
-        Returns:
-            True if account was locked, False otherwise
-        """
-        # Record this failed attempt
+        # Record a failed login attempt and lock account if threshold reached.
         attempt = FailedLoginAttempt(
             username=username,
             ip_address=ip_address
@@ -312,13 +197,7 @@ class AuthService:
 
     @staticmethod
     def clear_failed_attempts(username: str, db: Session):
-        """
-        Clear failed login attempts after successful login.
-
-        Args:
-            username: Username to clear attempts for
-            db: Database session
-        """
+        # Clear failed login attempts after successful login.
         db.query(FailedLoginAttempt).filter(
             FailedLoginAttempt.username == username
         ).delete()
@@ -331,18 +210,7 @@ class AuthService:
         db: Session,
         admin_settings
     ) -> Tuple[bool, int]:
-        """
-        Check if user has logged in from too many different IPs.
-
-        Args:
-            user_id: User's unique ID
-            current_ip: Current IP address
-            db: Database session
-            admin_settings: Application admin settings
-
-        Returns:
-            Tuple of (is_suspicious, unique_ip_count)
-        """
+        # Check if user has logged in from too many different IPs, botnet/bruteforce protection.
         cutoff = datetime.now(timezone.utc) - timedelta(
             hours=admin_settings.auth.suspicious_ip_window_hours
         )
@@ -371,28 +239,7 @@ class AuthService:
         db: Session,
         admin_settings
     ) -> Tuple[bool, Optional[User], Optional[str]]:
-        """
-        Authenticate a user and return result.
-
-        Comprehensive authentication flow that checks:
-        1. Account lockout status
-        2. User existence
-        3. Account enabled/disabled
-        4. Password correctness
-        5. Suspicious IP activity
-
-        Args:
-            username: Username to authenticate
-            password: Plain text password
-            ip_address: IP address of login attempt
-            user_agent: User agent string
-            db: Database session
-            admin_settings: Application admin settings
-
-        Returns:
-            Tuple of (success, user, error_message)
-        """
-        # Check account lockout
+        # Authenticate a user after checking lockout and return result.
         is_locked, lockout_until = AuthService.check_account_lockout(username, db)
         if is_locked:
             minutes_remaining = int((lockout_until - datetime.now(timezone.utc)).total_seconds() / 60)
@@ -440,10 +287,7 @@ class AuthService:
 
 
 class AuditLogService:
-    """
-    Service for recording authentication events in the audit log.
-    """
-
+    # Service for recording authentication events in the audit log.
     @staticmethod
     def log_event(
         event_type: str,
@@ -453,17 +297,6 @@ class AuditLogService:
         username: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None
     ):
-        """
-        Record an authentication event in the audit log.
-
-        Args:
-            event_type: Type of event (login_success, login_failed, logout, etc.)
-            ip_address: IP address of the event
-            db: Database session
-            user_id: Optional user ID
-            username: Optional username
-            details: Optional dictionary of additional details
-        """
         audit_entry = AuthAuditLog(
             event_type=event_type,
             user_id=user_id,

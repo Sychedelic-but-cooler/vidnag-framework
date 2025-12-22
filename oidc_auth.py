@@ -1,12 +1,5 @@
 """
 OIDC/OAuth Authentication Service
-
-Handles all OIDC/OAuth authentication flows including:
-- Authorization Code Flow with PKCE
-- Authorization Code Flow without PKCE
-- User info retrieval
-- Admin status determination
-- User account management
 """
 
 import hashlib
@@ -24,23 +17,11 @@ from external_auth import OIDCConfig
 
 
 class OIDCService:
-    """Service for handling OIDC/OAuth authentication"""
+    # Service for handling OIDC/OAuth authentication
 
     @staticmethod
     async def get_oidc_metadata(discovery_url: str) -> Dict[str, Any]:
-        """
-        Fetch OIDC provider metadata from discovery URL.
-
-        Args:
-            discovery_url: OIDC discovery endpoint URL
-                         (e.g., https://auth.example.com/.well-known/openid-configuration)
-
-        Returns:
-            Dictionary containing OIDC metadata (endpoints, supported features, etc.)
-
-        Raises:
-            httpx.HTTPError: If metadata fetch fails
-        """
+        # Fetch OIDC provider metadata from discovery URL.
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(discovery_url)
             response.raise_for_status()
@@ -48,15 +29,7 @@ class OIDCService:
 
     @staticmethod
     def generate_pkce_pair() -> Tuple[str, str]:
-        """
-        Generate PKCE code_verifier and code_challenge pair.
-
-        PKCE (Proof Key for Code Exchange) prevents authorization code interception attacks.
-
-        Returns:
-            Tuple of (code_verifier, code_challenge)
-        """
-        # Generate random code_verifier (43-128 characters)
+        # Generate PKCE code_verifier and code_challenge pair, random code_verifier (43-128 characters)
         code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
 
         # Create code_challenge = BASE64URL(SHA256(code_verifier))
@@ -72,22 +45,7 @@ class OIDCService:
         code_verifier: Optional[str],
         ip_address: str
     ) -> str:
-        """
-        Create OIDC auth state for CSRF protection.
-
-        Stores temporary state in database for validation during callback.
-        State expires after 10 minutes.
-
-        Args:
-            db: Database session
-            redirect_uri: Redirect URI used in authorization request
-            code_verifier: PKCE code_verifier (None if not using PKCE)
-            ip_address: IP address of user initiating login
-
-        Returns:
-            Generated state token
-        """
-        # Generate random state token
+        # Create OIDC auth state for CSRF protection, generate random state token
         state = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
 
         # Create auth state record
@@ -111,24 +69,7 @@ class OIDCService:
         state: str,
         ip_address: str
     ) -> Optional[OIDCAuthState]:
-        """
-        Validate OIDC state and consume it (one-time use).
-
-        Security checks:
-        1. State exists in database
-        2. State hasn't expired
-        3. IP address matches (prevents session fixation)
-        4. State is deleted after validation (one-time use)
-
-        Args:
-            db: Database session
-            state: State token from callback
-            ip_address: IP address of user completing login
-
-        Returns:
-            OIDCAuthState if valid, None if invalid
-        """
-        # Find state in database
+        # Validate OIDC state and consume it (one-time use).
         auth_state = db.query(OIDCAuthState).filter(OIDCAuthState.state == state).first()
 
         if not auth_state:
@@ -162,25 +103,7 @@ class OIDCService:
         client_secret: str,
         code_verifier: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Exchange authorization code for access token and ID token.
-
-        Supports both PKCE and non-PKCE flows.
-
-        Args:
-            code: Authorization code from callback
-            redirect_uri: Same redirect_uri used in authorization request
-            token_endpoint: OIDC token endpoint URL
-            client_id: OAuth client ID
-            client_secret: OAuth client secret
-            code_verifier: PKCE code_verifier (None if not using PKCE)
-
-        Returns:
-            Token response containing access_token, id_token, etc.
-
-        Raises:
-            httpx.HTTPError: If token exchange fails
-        """
+       # Exchange authorization code for access token and ID token, supports both PKCE and non-PKCE flows.
         data = {
             "grant_type": "authorization_code",
             "code": code,
@@ -204,19 +127,7 @@ class OIDCService:
 
     @staticmethod
     async def get_userinfo(userinfo_endpoint: str, access_token: str) -> Dict[str, Any]:
-        """
-        Fetch user info from OIDC provider.
-
-        Args:
-            userinfo_endpoint: OIDC userinfo endpoint URL
-            access_token: Access token from token exchange
-
-        Returns:
-            User info dictionary (sub, email, preferred_username, groups, etc.)
-
-        Raises:
-            httpx.HTTPError: If userinfo fetch fails
-        """
+        # Fetch user info from OIDC provider.
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 userinfo_endpoint,
@@ -227,18 +138,7 @@ class OIDCService:
 
     @staticmethod
     def determine_admin_status(userinfo: Dict[str, Any], config: OIDCConfig) -> bool:
-        """
-        Determine if user should be admin based on OIDC groups.
-
-        Checks if the configured admin group is present in the user's groups/roles.
-
-        Args:
-            userinfo: User info from OIDC provider
-            config: OIDC configuration
-
-        Returns:
-            True if user should be admin, False otherwise
-        """
+        # Determine if user should be admin based on OIDC groups, admin claim is admin configurable.
         # Get groups/roles from configured claim
         groups = userinfo.get(config.admin_group_claim, [])
 
@@ -258,27 +158,7 @@ class OIDCService:
         config: OIDCConfig,
         provider_name: str
     ) -> Tuple[Optional[User], Optional[str]]:
-        """
-        Find existing OIDC user or create new one.
-
-        Flow:
-        1. Check if oidc_subject exists -> return existing user
-        2. Extract username from OIDC claim
-        3. Check if username exists -> return error (conflict - requires manual linking)
-        4. Auto-create user if enabled
-        5. Set is_admin from OIDC groups
-
-        Args:
-            db: Database session
-            userinfo: User info from OIDC provider
-            config: OIDC configuration
-            provider_name: Provider name (e.g., "keycloak")
-
-        Returns:
-            Tuple of (User, error_message)
-            - (user, None) if successful
-            - (None, error) if failed
-        """
+        # Find existing OIDC user or create new one.
         oidc_subject = userinfo.get("sub")
         if not oidc_subject:
             return None, "OIDC provider did not return 'sub' claim"
@@ -337,20 +217,7 @@ class OIDCService:
         state: str,
         code_challenge: Optional[str] = None
     ) -> str:
-        """
-        Build OIDC authorization URL for redirect.
-
-        Args:
-            authorization_endpoint: OIDC authorization endpoint URL
-            client_id: OAuth client ID
-            redirect_uri: Callback URL
-            scopes: List of OAuth scopes (e.g., ["openid", "profile", "email"])
-            state: CSRF protection state token
-            code_challenge: PKCE code_challenge (None if not using PKCE)
-
-        Returns:
-            Complete authorization URL
-        """
+        # Build OIDC authorization URL for redirect.
         params = {
             "response_type": "code",
             "client_id": client_id,
@@ -368,17 +235,7 @@ class OIDCService:
 
     @staticmethod
     def cleanup_expired_states(db: Session) -> int:
-        """
-        Clean up expired OIDC auth states.
-
-        Should be called periodically (e.g., hourly) to prevent table bloat.
-
-        Args:
-            db: Database session
-
-        Returns:
-            Number of states deleted
-        """
+        # Clean up expired OIDC auth states.
         now = datetime.now(timezone.utc)
         expired_states = db.query(OIDCAuthState).filter(OIDCAuthState.expires_at < now).all()
 
