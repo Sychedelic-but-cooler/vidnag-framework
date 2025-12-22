@@ -43,7 +43,7 @@ import platform
 import httpx
 
 # Application modules
-from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings, JWTKey, AuthAuditLog, OIDCAuthState
+from database import init_db, get_db_session, Download, DownloadStatus, ToolConversion, ConversionStatus, get_db, User, UserLoginHistory, FailedLoginAttempt, SystemSettings, JWTKey, AuthAuditLog, OIDCAuthState, ShareToken
 from sqlalchemy import or_, and_
 from settings import settings, SETTINGS_FILE
 from admin_settings import get_admin_settings, ADMIN_SETTINGS_FILE
@@ -453,11 +453,22 @@ async def rate_limit_middleware(request: Request, call_next):
     - window_seconds: Time window for rate limiting
 
     Returns 429 Too Many Requests if limit exceeded.
+
+    Note: Static asset endpoints (thumbnails, videos) are excluded from rate limiting
+    to prevent issues when pages display many files. These endpoints have caching headers
+    and authentication, so they're protected through other mechanisms.
     """
     admin_settings = get_admin_settings()
 
     # Skip rate limiting if disabled
     if not admin_settings.rate_limit.enabled:
+        return await call_next(request)
+
+    # Exclude static file endpoints from rate limiting
+    # These scale with the number of downloads and would trigger false positives
+    # They're protected by: authentication, caching headers, and lazy loading
+    static_file_paths = ['/api/files/thumbnail/', '/api/files/video/']
+    if any(request.url.path.startswith(path) for path in static_file_paths):
         return await call_next(request)
 
     # Get client IP (set by proxy headers middleware)
@@ -623,6 +634,8 @@ USER_LOG_COMPONENTS = {
     "YT-DLP",           # yt-dlp output
     "YT-DLP-ERR",       # yt-dlp errors
     "API",              # General API calls
+    "Playlist",         # Playlist extraction and processing
+    "Share",            # Share link creation
     "Tools",            # Conversion tools
     "ToolConversion",   # Tool conversions
     "VideoTransform",   # Video transformations
@@ -1436,6 +1449,7 @@ class DownloadRequest(BaseModel):
     url: str                                # Video URL to download
     cookies_file: Optional[str] = None      # Optional cookies file for authentication
     is_public: bool = True                  # Visibility flag (defaults to public)
+    download_playlist: bool = False         # If True, download all videos in playlist
 
 
 class DownloadResponse(BaseModel):
@@ -1764,6 +1778,92 @@ class YtdlpService:
     Handles the subprocess execution, progress tracking, and file management.
     All output from yt-dlp is parsed and logged for the frontend to display.
     """
+
+    @staticmethod
+    async def extract_playlist_urls(url: str, cookies_file: Optional[str] = None) -> List[str]:
+        """
+        Extract all video URLs from a playlist without downloading.
+        Uses yt-dlp's --flat-playlist and --get-url to extract individual video URLs.
+
+        Returns:
+            List of video URLs in the playlist, or empty list if extraction fails
+        """
+        await emit_log("INFO", "Playlist", f"Starting playlist extraction with yt-dlp")
+
+        cmd = [
+            "python3.12", "-m", "yt_dlp",
+            "--flat-playlist",  # Don't download, just list
+            "--yes-playlist",   # Explicitly process as playlist
+            "--get-url",        # Get video URLs (more reliable than --print url)
+            "--skip-download",  # Don't download, just extract info
+            url
+        ]
+
+        if cookies_file and os.path.exists(f"cookies/{cookies_file}"):
+            cmd.extend(["--cookies", f"cookies/{cookies_file}"])
+            await emit_log("INFO", "Playlist", f"Using cookies file: {cookies_file}")
+
+        try:
+            await emit_log("DEBUG", "Playlist", f"Executing: {' '.join(cmd)}")
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                error_msg = stderr.decode().strip()
+                await emit_log("ERROR", "Playlist", f"yt-dlp failed with return code {process.returncode}")
+                await emit_log("ERROR", "Playlist", f"Error output: {error_msg}")
+                return []
+
+            # Parse URLs from output (one per line)
+            output_text = stdout.decode().strip()
+            await emit_log("DEBUG", "Playlist", f"Raw output length: {len(output_text)} characters")
+
+            if not output_text:
+                await emit_log("WARNING", "Playlist", "No output from yt-dlp - playlist may be empty or URL is a single video")
+                return []
+
+            urls = [line.strip() for line in output_text.split('\n') if line.strip() and line.strip().startswith('http')]
+
+            # Check for duplicates
+            unique_urls = list(dict.fromkeys(urls))  # Preserves order while removing duplicates
+            if len(urls) != len(unique_urls):
+                await emit_log("WARNING", "Playlist", f"Found {len(urls) - len(unique_urls)} duplicate URLs, removed them")
+                urls = unique_urls
+
+            # Log stderr if there was any (even with success)
+            stderr_text = stderr.decode().strip()
+            if stderr_text:
+                await emit_log("DEBUG", "Playlist", f"yt-dlp stderr: {stderr_text}")
+
+            await emit_log("INFO", "Playlist", f"Successfully extracted {len(urls)} unique video URL(s) from playlist")
+
+            # Log first few URLs for debugging
+            if urls:
+                await emit_log("INFO", "Playlist", f"Preview of extracted URLs:")
+                for i, video_url in enumerate(urls[:5]):
+                    await emit_log("INFO", "Playlist", f"  [{i+1}] {video_url}")
+                if len(urls) > 5:
+                    await emit_log("INFO", "Playlist", f"  ... and {len(urls) - 5} more videos")
+
+            # Log if all URLs are the same (indicates a problem)
+            if len(urls) > 1 and len(set(urls)) == 1:
+                await emit_log("ERROR", "Playlist", f"All {len(urls)} URLs are identical! This indicates an extraction problem.")
+                await emit_log("ERROR", "Playlist", f"The repeated URL is: {urls[0]}")
+                return []
+
+            return urls
+
+        except Exception as e:
+            await emit_log("ERROR", "Playlist", f"Exception while extracting playlist: {str(e)}")
+            import traceback
+            await emit_log("ERROR", "Playlist", f"Traceback: {traceback.format_exc()}")
+            return []
 
     @staticmethod
     async def download_video(download_id: str, url: str, cookies_file: Optional[str] = None):
@@ -4923,7 +5023,70 @@ async def start_download(request: DownloadRequest, http_request: Request, curren
     # Extract user ID from authenticated user
     user_id = current_user.get("sub")
 
-    # Create download with user association and visibility setting
+    # Handle playlist downloads
+    if request.download_playlist:
+        await emit_log("INFO", "Playlist", f"Extracting playlist URLs from: {safe_url}")
+
+        # Extract all video URLs from the playlist
+        playlist_urls = await YtdlpService.extract_playlist_urls(request.url, request.cookies_file)
+
+        if playlist_urls and len(playlist_urls) > 0:
+            await emit_log("INFO", "Playlist", f"✓ Successfully extracted {len(playlist_urls)} videos from playlist")
+            await emit_log("INFO", "Playlist", f"Creating {len(playlist_urls)} separate download entries...")
+
+            # Create and queue a download for each video in the playlist
+            # Each video gets its own database entry and queue position
+            created_downloads = []
+            for idx, video_url in enumerate(playlist_urls):
+                try:
+                    await emit_log("INFO", "Playlist", f"[{idx + 1}/{len(playlist_urls)}] Creating download for: {video_url[:80]}...")
+
+                    # Create database entry for this video
+                    download = DatabaseService.create_download(
+                        db,
+                        video_url,
+                        request.cookies_file,
+                        user_id=user_id,
+                        is_public=request.is_public
+                    )
+                    created_downloads.append(download)
+
+                    await emit_log("INFO", "Playlist", f"[{idx + 1}/{len(playlist_urls)}] ✓ Created download with ID: {download.id}", download.id)
+
+                    # Add this video to the download queue as a separate job
+                    await download_queue.add_to_queue(
+                        download.id,
+                        video_url,
+                        request.cookies_file
+                    )
+
+                    await emit_log("INFO", "Playlist", f"[{idx + 1}/{len(playlist_urls)}] ✓ Added to queue (queue size: {download_queue.queue.qsize()})", download.id)
+
+                except Exception as e:
+                    await emit_log("ERROR", "Playlist", f"[{idx + 1}/{len(playlist_urls)}] ✗ Failed to create download: {str(e)}")
+                    import traceback
+                    await emit_log("ERROR", "Playlist", f"Traceback: {traceback.format_exc()}")
+                    continue
+
+            if created_downloads:
+                await emit_log("INFO", "Playlist", f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                await emit_log("INFO", "Playlist", f"✓ PLAYLIST PROCESSING COMPLETE")
+                await emit_log("INFO", "Playlist", f"  Total videos extracted: {len(playlist_urls)}")
+                await emit_log("INFO", "Playlist", f"  Successfully created: {len(created_downloads)}")
+                await emit_log("INFO", "Playlist", f"  Failed: {len(playlist_urls) - len(created_downloads)}")
+                await emit_log("INFO", "Playlist", f"  All downloads are now in the queue")
+                await emit_log("INFO", "Playlist", f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+                # Return the first download created
+                return enrich_download_with_user(db, created_downloads[0])
+            else:
+                await emit_log("ERROR", "Playlist", "✗ Failed to create any downloads from playlist")
+                raise HTTPException(status_code=500, detail="Failed to create downloads from playlist")
+        else:
+            # If extraction failed or playlist is empty, fall back to single video download
+            await emit_log("WARNING", "Playlist", "No playlist URLs found, falling back to single video download")
+
+    # Standard single video download
     download = DatabaseService.create_download(
         db,
         request.url,
@@ -5857,7 +6020,17 @@ async def get_thumbnail(download_id: str, current_user: Dict[str, Any] = Depends
     }
     media_type = media_types.get(ext, 'image/jpeg')
 
-    return FileResponse(filepath, media_type=media_type)
+    # Add caching headers to prevent repeated requests for the same thumbnail
+    # ETag based on file modification time for efficient cache validation
+    file_stat = os.stat(filepath)
+    etag = f'"{download.internal_thumbnail}-{int(file_stat.st_mtime)}"'
+
+    headers = {
+        'Cache-Control': 'private, max-age=3600, must-revalidate',  # Cache for 1 hour
+        'ETag': etag
+    }
+
+    return FileResponse(filepath, media_type=media_type, headers=headers)
 
 
 @app.get("/api/files/video/{download_id}")
@@ -5900,7 +6073,16 @@ async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get
     }
     media_type = media_types.get(ext, 'video/mp4')
 
-    return FileResponse(filepath, media_type=media_type)
+    # Add caching headers for video files
+    file_stat = os.stat(filepath)
+    etag = f'"{download.internal_filename}-{int(file_stat.st_mtime)}"'
+
+    headers = {
+        'Cache-Control': 'private, max-age=3600, must-revalidate',
+        'ETag': etag
+    }
+
+    return FileResponse(filepath, media_type=media_type, headers=headers)
 
 
 @app.get("/api/files/download/{download_id}")
@@ -5929,6 +6111,441 @@ async def download_file(download_id: str, current_user: Dict[str, Any] = Depends
     from fastapi.responses import FileResponse
     # Use display filename (filename field) for the downloaded file name
     return FileResponse(filepath, filename=download.filename, media_type='application/octet-stream')
+
+
+@app.post("/api/share/{download_id}")
+async def create_share_link(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
+    """
+    Create a shareable link for a public video.
+    Only public videos can be shared.
+    Returns the share token that can be used in /share/{token} URL.
+    """
+    # Get the download
+    download = DatabaseService.get_download_by_id(db, download_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="Download not found")
+
+    # Verify user has access to this download
+    if not verify_download_access(download, current_user):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Only public videos can be shared
+    if not download.is_public:
+        raise HTTPException(status_code=403, detail="Only public videos can be shared")
+
+    # Check if download is completed
+    if download.status != DownloadStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Video must be completed before sharing")
+
+    # Check if a share link already exists for this download
+    existing_share = db.query(ShareToken).filter(ShareToken.download_id == download_id).first()
+    if existing_share:
+        await emit_log("INFO", "Share", f"Returning existing share link for download {download_id[:8]}...", download_id)
+        return {"token": existing_share.token, "url": f"/share/{existing_share.token}"}
+
+    # Generate a random alphanumeric token (a-z, 0-9 only)
+    import secrets
+    import string
+    # Generate 16 character token using only lowercase letters and digits
+    alphabet = string.ascii_lowercase + string.digits
+    token = ''.join(secrets.choice(alphabet) for _ in range(16))
+
+    # Create share token
+    share_token = ShareToken(
+        token=token,
+        download_id=download_id,
+        created_by=current_user.get("sub")
+    )
+    db.add(share_token)
+    db.commit()
+
+    await emit_log("INFO", "Share", f"Created share link for download {download_id[:8]}...", download_id)
+
+    return {"token": token, "url": f"/share/{token}"}
+
+
+def generate_share_error_page(title: str, message: str, emoji: str = "❌") -> str:
+    """
+    Generate a consistent error page for share links that matches the share page styling.
+    """
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{title}</title>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: #0a0a0a;
+                background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+                color: #ffffff;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }}
+            .container {{
+                max-width: 600px;
+                width: 100%;
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 20px;
+                padding: 40px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+                text-align: center;
+            }}
+            .emoji {{
+                font-size: 4rem;
+                margin-bottom: 20px;
+            }}
+            h1 {{
+                font-size: 1.8rem;
+                margin-bottom: 15px;
+                background: linear-gradient(135deg, #00FFFF, #FF1493);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }}
+            p {{
+                color: #cccccc;
+                font-size: 1.1rem;
+                line-height: 1.6;
+                margin-bottom: 30px;
+            }}
+            .home-link {{
+                display: inline-block;
+                padding: 12px 24px;
+                background: linear-gradient(135deg, #00FFFF, #FF1493);
+                color: #ffffff;
+                text-decoration: none;
+                border-radius: 8px;
+                transition: transform 0.2s ease, box-shadow 0.2s ease;
+            }}
+            .home-link:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 5px 20px rgba(0, 255, 255, 0.3);
+            }}
+            .powered-by {{
+                margin-top: 30px;
+                text-align: center;
+                color: #666;
+                font-size: 0.9rem;
+            }}
+            .powered-by a {{
+                color: #00FFFF;
+                text-decoration: none;
+                transition: color 0.3s ease;
+            }}
+            .powered-by a:hover {{
+                color: #FF1493;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="emoji">{emoji}</div>
+            <h1>{title}</h1>
+            <p>{message}</p>
+            <a href="/" class="home-link">Go to Homepage</a>
+            <div class="powered-by">
+                Powered by <a href="/">Vidnag Framework</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@app.get("/share/{token}")
+async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
+    """
+    Public endpoint to view a shared video.
+    No authentication required - anyone with the link can view.
+    """
+    from fastapi.responses import HTMLResponse
+
+    # Look up the share token
+    share = db.query(ShareToken).filter(ShareToken.token == token).first()
+    if not share:
+        return HTMLResponse(
+            content=generate_share_error_page(
+                "Share Link Not Found",
+                "This share link doesn't exist or may have been removed. Please check the URL and try again.",
+                "🔍"
+            ),
+            status_code=404
+        )
+
+    # Get the download
+    download = DatabaseService.get_download_by_id(db, share.download_id)
+    if not download:
+        return HTMLResponse(
+            content=generate_share_error_page(
+                "Video Not Found",
+                "The video associated with this share link could not be found.",
+                "📹"
+            ),
+            status_code=404
+        )
+
+    # Verify video is still public
+    if not download.is_public:
+        return HTMLResponse(
+            content=generate_share_error_page(
+                "Video No Longer Public",
+                "This video has been made private by the owner and is no longer available for sharing.",
+                "🔒"
+            ),
+            status_code=403
+        )
+
+    # Verify video is completed
+    if download.status != DownloadStatus.COMPLETED:
+        return HTMLResponse(
+            content=generate_share_error_page(
+                "Video Not Available",
+                "This video is not yet available for viewing. It may still be downloading or processing.",
+                "⏳"
+            ),
+            status_code=404
+        )
+
+    # Update view count
+    share.view_count += 1
+    share.last_viewed_at = datetime.now(timezone.utc)
+    db.commit()
+
+    # Return HTML page with embedded video player
+    # Get video and thumbnail URLs (using share-specific endpoints)
+    thumbnail_url = f"/share/{token}/thumbnail" if download.thumbnail else None
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{download.filename or 'Shared Video'}</title>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: #0a0a0a;
+                background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+                color: #ffffff;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }}
+            .container {{
+                max-width: 1200px;
+                width: 100%;
+                background: rgba(255, 255, 255, 0.05);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 20px;
+                padding: 30px;
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            }}
+            h1 {{
+                font-size: 1.8rem;
+                margin-bottom: 20px;
+                background: linear-gradient(135deg, #00FFFF, #FF1493);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }}
+            video {{
+                width: 100%;
+                max-height: 70vh;
+                border-radius: 10px;
+                background: #000;
+                border: 1px solid rgba(0, 255, 255, 0.3);
+            }}
+            .info {{
+                margin-top: 20px;
+                padding: 15px;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                display: flex;
+                gap: 20px;
+                flex-wrap: wrap;
+            }}
+            .info p {{
+                margin: 0;
+                color: #cccccc;
+            }}
+            .info strong {{
+                color: #00FFFF;
+            }}
+            .powered-by {{
+                margin-top: 20px;
+                text-align: center;
+                color: #666;
+                font-size: 0.9rem;
+            }}
+            .powered-by a {{
+                color: #00FFFF;
+                text-decoration: none;
+                transition: color 0.3s ease;
+            }}
+            .powered-by a:hover {{
+                color: #FF1493;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>{download.filename or 'Shared Video'}</h1>
+            <video controls {"poster='" + thumbnail_url + "'" if thumbnail_url else ""}>
+                <source src="/share/{token}/video" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+            <div class="info">
+                <p><strong>Views:</strong> {share.view_count}</p>
+                <p><strong>Shared:</strong> {share.created_at.strftime('%Y-%m-%d %H:%M UTC')}</p>
+            </div>
+            <div class="powered-by">
+                Powered by <a href="/">Vidnag Framework</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    return HTMLResponse(content=html_content)
+
+
+@app.get("/share/{token}/video")
+async def get_shared_video(token: str, db: Session = Depends(get_db_session)):
+    """
+    Serve video file for a shared link.
+    No authentication required - accessible via share token.
+    """
+    # Look up the share token
+    share = db.query(ShareToken).filter(ShareToken.token == token).first()
+    if not share:
+        raise HTTPException(status_code=404, detail="Share link not found")
+
+    # Get the download
+    download = DatabaseService.get_download_by_id(db, share.download_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Verify video is still public
+    if not download.is_public:
+        raise HTTPException(status_code=403, detail="This video is no longer public")
+
+    # Verify video is completed
+    if download.status != DownloadStatus.COMPLETED:
+        raise HTTPException(status_code=404, detail="Video not available")
+
+    if not download.internal_filename:
+        raise HTTPException(status_code=404, detail="Video file not found")
+
+    # Use internal_filename (UUID-based) for file access
+    filepath = os.path.join("downloads", download.internal_filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Video file not found on disk")
+
+    # Security: Verify file extension
+    ext = os.path.splitext(download.internal_filename)[1].lower()
+    allowed_extensions = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v'}
+    if ext not in allowed_extensions:
+        raise HTTPException(status_code=403, detail="File type not allowed")
+
+    from fastapi.responses import FileResponse
+    media_types = {
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mkv': 'video/x-matroska',
+        '.avi': 'video/x-msvideo',
+        '.mov': 'video/quicktime'
+    }
+    media_type = media_types.get(ext, 'video/mp4')
+
+    # Add caching headers for video files
+    file_stat = os.stat(filepath)
+    etag = f'"{download.internal_filename}-{int(file_stat.st_mtime)}"'
+
+    headers = {
+        'Cache-Control': 'public, max-age=3600, must-revalidate',
+        'ETag': etag
+    }
+
+    return FileResponse(filepath, media_type=media_type, headers=headers)
+
+
+@app.get("/share/{token}/thumbnail")
+async def get_shared_thumbnail(token: str, db: Session = Depends(get_db_session)):
+    """
+    Serve thumbnail for a shared link.
+    No authentication required - accessible via share token.
+    """
+    # Look up the share token
+    share = db.query(ShareToken).filter(ShareToken.token == token).first()
+    if not share:
+        raise HTTPException(status_code=404, detail="Share link not found")
+
+    # Get the download
+    download = DatabaseService.get_download_by_id(db, share.download_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Verify video is still public
+    if not download.is_public:
+        raise HTTPException(status_code=403, detail="This video is no longer public")
+
+    if not download.internal_thumbnail:
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+    # Use internal_thumbnail (UUID-based) for file access
+    filepath = os.path.join("downloads", download.internal_thumbnail)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Thumbnail file not found")
+
+    # Security: Verify file extension
+    ext = os.path.splitext(download.internal_thumbnail)[1].lower()
+    allowed_extensions = {'.jpg', '.jpeg', '.png', '.webp'}
+    if ext not in allowed_extensions:
+        raise HTTPException(status_code=403, detail="File type not allowed")
+
+    from fastapi.responses import FileResponse
+    media_types = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp'
+    }
+    media_type = media_types.get(ext, 'image/jpeg')
+
+    # Add caching headers to prevent repeated requests for the same thumbnail
+    # ETag based on file modification time for efficient cache validation
+    file_stat = os.stat(filepath)
+    etag = f'"{download.internal_thumbnail}-{int(file_stat.st_mtime)}"'
+
+    headers = {
+        'Cache-Control': 'public, max-age=3600, must-revalidate',
+        'ETag': etag
+    }
+
+    return FileResponse(filepath, media_type=media_type, headers=headers)
 
 
 @app.get("/api/files", response_model=List[FileInfo])

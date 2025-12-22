@@ -781,6 +781,7 @@ async function submitDownload(event) {
     const cookiesFile = document.getElementById('cookies-file').value || null;
     const visibility = document.getElementById('download-visibility').value;
     const isPublic = visibility === 'public';
+    const downloadPlaylist = document.getElementById('download-playlist').checked;
 
     if (!urlsText) {
         showFormError('video-url', 'Please enter a video URL');
@@ -829,6 +830,11 @@ async function submitDownload(event) {
     let failCount = 0;
 
     try {
+        // Show initial notification for playlist downloads
+        if (downloadPlaylist && urlsToDownload.length === 1) {
+            showToast('Extracting playlist URLs... This may take a moment.', 'info');
+        }
+
         // Submit each URL as a separate download to the backend
         // This allows tracking and managing each download independently
         for (const url of urlsToDownload) {
@@ -841,7 +847,8 @@ async function submitDownload(event) {
                     body: JSON.stringify({
                         url,
                         cookies_file: cookiesFile,
-                        is_public: isPublic
+                        is_public: isPublic,
+                        download_playlist: downloadPlaylist
                     })
                 });
 
@@ -1277,6 +1284,7 @@ function renderDownloads(containerId, downloads, append = false) {
                 <div class="download-thumbnail">
                     <img src="${addTokenToUrl(`${API_BASE}/api/files/thumbnail/${download.id}`)}"
                          alt="Video thumbnail"
+                         loading="lazy"
                          onerror="this.style.display='none'">
                 </div>
             ` : ''}
@@ -1338,6 +1346,11 @@ function renderDownloads(containerId, downloads, append = false) {
                         <button class="btn btn-secondary btn-small" onclick="downloadVideo('${download.id}', '${escapeHtml(download.filename)}')">
                             <span>⬇</span> Download
                         </button>
+                        ${download.is_public ? `
+                            <button class="btn btn-success btn-small" onclick="shareVideo('${download.id}', event)" title="Create shareable link">
+                                <span>🔗</span> Share
+                            </button>
+                        ` : ''}
                     ` : ''}
                     ${download.status === 'failed' ? `
                         <button class="btn btn-secondary btn-small" onclick="retryDownload('${escapeHtml(download.url)}')">Retry</button>
@@ -1749,6 +1762,99 @@ function playVideo(downloadId, title) {
     }
 
     document.body.appendChild(modal);
+}
+
+/**
+ * Share Video
+ * Creates a shareable link for a public video
+ */
+async function shareVideo(downloadId, event) {
+    event?.stopPropagation();
+
+    try {
+        // Call the share API endpoint
+        const response = await apiFetch(`${API_BASE}/api/share/${downloadId}`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to create share link');
+        }
+
+        const data = await response.json();
+
+        // Construct full URL
+        const fullUrl = `${window.location.origin}${data.url}`;
+
+        // Create modal with share link
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.style.display = 'flex';
+
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2>Share Video</h2>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p style="margin-bottom: 15px; color: var(--text-muted);">
+                        Anyone with this link can view the video without logging in:
+                    </p>
+                    <div style="display: flex; gap: 10px;">
+                        <input
+                            type="text"
+                            id="share-link-input"
+                            value="${fullUrl}"
+                            readonly
+                            style="flex: 1; padding: 10px; border: 1px solid var(--glass-border);
+                                   background: var(--glass-bg); border-radius: 8px; color: var(--text-light);"
+                        />
+                        <button
+                            class="btn btn-primary"
+                            onclick="copyShareLink('${fullUrl}')"
+                            style="white-space: nowrap;"
+                        >
+                            📋 Copy
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Close modal handler
+        const closeModal = () => modal.remove();
+        modal.querySelector('.modal-close').addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        });
+
+        document.body.appendChild(modal);
+
+        // Auto-select the link for easy copying
+        setTimeout(() => {
+            const input = document.getElementById('share-link-input');
+            input.select();
+        }, 100);
+
+        showToast('Share link created!', 'success');
+
+    } catch (error) {
+        console.error('Failed to create share link:', error);
+        showToast(error.message || 'Failed to create share link', 'error');
+    }
+}
+
+/**
+ * Copy share link to clipboard
+ */
+function copyShareLink(url) {
+    navigator.clipboard.writeText(url).then(() => {
+        showToast('Link copied to clipboard!', 'success');
+    }).catch(() => {
+        showToast('Failed to copy link', 'error');
+    });
 }
 
 // Settings Management

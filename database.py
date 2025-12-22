@@ -233,6 +233,19 @@ class SystemSettings(Base):
     updated_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+class ShareToken(Base):
+    # Database model for shareable video links. Only public videos can be shared.
+    __tablename__ = "share_tokens"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    token = Column(String, unique=True, nullable=False, index=True)  # Random string for URL
+    download_id = Column(String, ForeignKey('downloads.id'), nullable=False, index=True)
+    created_by = Column(String, ForeignKey('users.id'), nullable=True)  # User who created the share
+    created_at = Column(UTCDateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    view_count = Column(Integer, default=0, nullable=False)  # Track how many times it's been viewed
+    last_viewed_at = Column(UTCDateTime, nullable=True)  # Last time someone viewed this share
+
+
 def init_db():
     # Initialize the database schema. Creates all tables defined by the above models if they don't exist yet.
     # This will not recreate existing tables or modify existing schemas.
