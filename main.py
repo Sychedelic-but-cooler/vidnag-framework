@@ -61,7 +61,7 @@ from oidc_auth import OIDCService
 from config import DATABASE_FILE
 
 # Application version (Major.Minor.Bugfix-ReleaseMonth)
-APP_VERSION = "2.7.35-12"
+APP_VERSION = "2.7.43-12"
 
 def cleanup_old_logs():
     """
