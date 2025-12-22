@@ -1,8 +1,7 @@
 """
 Vidnag Framework - Main Application
-A FastAPI-based web application for downloading videos using yt-dlp.
-Provides a web interface for managing video downloads with queue management,
-file browsing, and comprehensive logging.
+FastAPI-based web application for downloading and manipulating videos using yt-dlp.
+Github Repository: https://github.com/Sychedelic-but-cooler/vidnag-framework
 """
 
 # FastAPI and web framework imports
@@ -17,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-# Date and time handling (always use timezone-aware datetimes)
+# Date and time handling
 from datetime import datetime, timedelta, timezone
 
 # Type hints for better code clarity
@@ -65,11 +64,7 @@ from config import DATABASE_FILE
 APP_VERSION = "2.7.43-12"
 
 def cleanup_old_logs():
-    """
-    Remove log files older than 3 days on application startup.
-    Works in conjunction with TimedRotatingFileHandler to manage disk space.
-    Searches the logs directory and removes any file older than 3 days.
-    """
+    # Remove log files older than 3 days on application startup.
     try:
         logs_dir = "logs"
         if not os.path.exists(logs_dir):
@@ -101,15 +96,12 @@ def cleanup_old_logs():
 
 
 def init_settings_folder():
-    """
-    Initialize the settings folder with proper Linux permissions (700).
-    Creates the settings directory if it doesn't exist.
-    This must be called before any settings files are accessed.
-    """
+    # Initialize the settings folder with proper permissions (700).
     try:
         import stat
 
-        settings_dir = "settings"
+        # This can be changed if you really want
+        settings_dir = "settings" 
         
         # Create settings directory if it doesn't exist
         if not os.path.exists(settings_dir):
@@ -128,7 +120,7 @@ def init_settings_folder():
             for file_name in os.listdir(settings_dir):
                 file_path = os.path.join(settings_dir, file_name)
                 if os.path.isfile(file_path):
-                    os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)  # 600 permissions
+                    os.chmod(file_path, stat.S_IRUSR | stat.S_IWUSR)
                     logger.debug(f"Set permissions 600 on {file_path}")
         except Exception as e:
             logger.warning(f"Could not set permissions on settings files: {e}")
@@ -140,10 +132,7 @@ def init_settings_folder():
 
 
 def set_directory_permissions():
-    """
-    Set file permissions: downloads/logs (755), cookies (700), db/config (600).
-    Ensures proper security on Linux/macOS (no-op on Windows).
-    """
+    # Set file permissions on all created directories
     try:
         import stat
 
@@ -194,19 +183,9 @@ def set_directory_permissions():
 
 
 def get_client_ip(request: Request) -> str:
-    """
-    Get the client IP address from the request.
+    # Get the connecting client IP address from the request.
+    # Checks request.state.client_ip first (set by proxy middleware), then falls back to request.client.host
 
-    Checks request.state.client_ip first (set by proxy middleware),
-    then falls back to request.client.host.
-
-    Args:
-        request: FastAPI Request object
-
-    Returns:
-        Client IP address as string, or "unknown" if unavailable
-    """
-    # Try to get IP from middleware (handles proxy headers)
     if hasattr(request.state, 'client_ip'):
         return request.state.client_ip
 
@@ -219,12 +198,9 @@ def get_client_ip(request: Request) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application lifespan event handler.
-    Runs initialization code on startup and cleanup code on shutdown.
-    FastAPI calls this when the application starts and stops.
-    """
-    # Startup sequence - runs when the application starts
+    # Startup sequence
+    # Application lifespan event handler. Runs initialization code on startup and cleanup code on shutdown.
+
     global server_start_time
     server_start_time = datetime.now(timezone.utc)  # Track startup time for uptime calculation
 
@@ -234,16 +210,15 @@ async def lifespan(app: FastAPI):
     init_settings_folder()
 
     # Create all required directories if they don't exist
-    os.makedirs("downloads", exist_ok=True)  # Video download storage
-    os.makedirs("cookies", exist_ok=True)    # Cookie files for authenticated downloads
+    os.makedirs("downloads", exist_ok=True)  # Video Download Storage
+    os.makedirs("cookies", exist_ok=True)    # Cookie Files
     os.makedirs("logs", exist_ok=True)       # Application logs
-    os.makedirs("backups", exist_ok=True)    # Database backups (future use)
+    os.makedirs("backups", exist_ok=True)    # Application Backups
 
     # Set proper file permissions on critical directories and files
     set_directory_permissions()
 
     # Load and validate admin settings from admin_settings.json
-    # This must happen before any middleware or endpoints are initialized
     try:
         admin_settings = get_admin_settings()
         await emit_log("INFO", "System", "Admin settings loaded and validated successfully")
@@ -293,10 +268,9 @@ async def lifespan(app: FastAPI):
 
 
 async def shutdown_cleanup():
-    """
-    Cleanup resources during graceful shutdown.
-    Called when the application is shutting down (restart, SIGTERM, etc.)
-    """
+    # Shutdown Sequence.
+    # Cleans up resources and kills all client connections.
+
     try:
         await emit_log("INFO", "System", "Shutdown initiated - starting cleanup...")
 
@@ -322,8 +296,7 @@ async def shutdown_cleanup():
             except Exception as e:
                 logger.error(f"Error terminating conversion {conversion_id}: {e}")
 
-        # 3. Close WebSocket connections gracefully
-        # Close download-specific websockets
+        # 3. Close Download WebSockets Gracefully
         for download_id, websockets in list(active_connections.items()):
             for ws in websockets:
                 try:
@@ -331,7 +304,7 @@ async def shutdown_cleanup():
                 except Exception as e:
                     logger.error(f"Error closing websocket for {download_id}: {e}")
 
-        # Close log websockets
+        # 4. Close Logging WebSockets Gracefully
         for ws in list(log_websockets):
             try:
                 await ws.close(code=1001, reason="Server restarting")
@@ -350,24 +323,20 @@ async def shutdown_cleanup():
 # Create the FastAPI application instance with our lifespan handler
 app = FastAPI(title="Vidnag Framework API", lifespan=lifespan)
 
-# Configure Python's built-in logging system
-# This sets up console logging for debugging
+# Configure Python's  logging system so these can be fed to browser console
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Set up file-based logging for application logs
-# This creates persistent log files that rotate daily
+# Set up logging for application logs, these rotate daily
 os.makedirs("logs", exist_ok=True)
 
 from logging.handlers import TimedRotatingFileHandler
 
-# Create a rotating file handler
-# - Rotates logs at midnight each day
-# - Keeps 3 days of backup logs (backupCount=3)
-# - Automatically deletes logs older than 3 days
+# Create a rotating file handler for application logs
 file_handler = TimedRotatingFileHandler(
     filename="logs/application.log",
     when="midnight",         # Rotate at midnight
@@ -380,13 +349,11 @@ file_handler.setFormatter(logging.Formatter(
 ))
 
 # Create a separate logger for application logs
-# This prevents application logs from interfering with FastAPI's logs
 app_file_logger = logging.getLogger("app_logs")
 app_file_logger.setLevel(logging.INFO)
 app_file_logger.addHandler(file_handler)
 app_file_logger.propagate = False  # Don't send logs to parent logger
 
-# Dual logging system: separate admin and user logs
 # Admin log handler - for system management and security events
 admin_file_handler = TimedRotatingFileHandler(
     filename="logs/admin.log",
@@ -399,6 +366,7 @@ admin_file_handler.setFormatter(logging.Formatter(
     '%(asctime)s - %(levelname)s - %(message)s'
 ))
 
+# Create a separate logger for admin logs
 admin_file_logger = logging.getLogger("admin_logs")
 admin_file_logger.setLevel(logging.INFO)
 admin_file_logger.addHandler(admin_file_handler)
@@ -416,20 +384,19 @@ user_file_handler.setFormatter(logging.Formatter(
     '%(asctime)s - %(levelname)s - %(message)s'
 ))
 
+# Create a separate logger for user logs
 user_file_logger = logging.getLogger("user_logs")
 user_file_logger.setLevel(logging.INFO)
 user_file_logger.addHandler(user_file_handler)
 user_file_logger.propagate = False
 
-# Configure Cross-Origin Resource Sharing (CORS)
-# This allows the frontend to make API requests from different domains
-# Necessary when the frontend is served from a different origin than the API
-# Configuration is loaded from admin_settings.json
+
+# Load Configuration from admin_settings.json
 admin_settings_instance = get_admin_settings()
 
 # If CORS is disabled, use empty allowed_origins to block all cross-origin requests
 cors_allowed_origins = admin_settings_instance.cors.allowed_origins if admin_settings_instance.cors.enabled else []
-
+# Configure CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_allowed_origins,
@@ -438,41 +405,24 @@ app.add_middleware(
     allow_headers=admin_settings_instance.cors.allowed_headers,
 )
 
-# Rate Limiting Middleware
-# Configuration loaded from admin_settings.json
-# Applies rate limiting globally to all endpoints
-# IMPORTANT: This middleware must be declared BEFORE trust_proxy_headers
-# so that it executes AFTER the client IP has been extracted from proxy headers
+# Configure Rate Limiting Middleware
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    """
-    Apply rate limiting to all requests based on client IP.
-
-    Configuration from admin_settings.json:
-    - enabled: Master toggle for rate limiting
-    - max_requests_per_window: Number of allowed requests
-    - window_seconds: Time window for rate limiting
-
-    Returns 429 Too Many Requests if limit exceeded.
-
-    Note: Static asset endpoints (thumbnails, videos) are excluded from rate limiting
-    to prevent issues when pages display many files. These endpoints have caching headers
-    and authentication, so they're protected through other mechanisms.
-    """
+    # Apply rate limiting to all requests based on client IP.
+    # Returns 429 Too Many Requests if limit exceeded.
     admin_settings = get_admin_settings()
 
     # Skip rate limiting if disabled
     if not admin_settings.rate_limit.enabled:
         return await call_next(request)
 
-    # Exclude static file endpoints from rate limiting
-    # These scale with the number of downloads and would trigger false positives
+    # These scale with the number of downloads and would trigger false positives, excluded from rate limiting
     # They're protected by: authentication, caching headers, and lazy loading
     static_file_paths = ['/api/files/thumbnail/', '/api/files/video/']
     if any(request.url.path.startswith(path) for path in static_file_paths):
         return await call_next(request)
 
-    # Get client IP (set by proxy headers middleware)
+    # Get client IP
     client_ip = getattr(request.state, 'client_ip', 'unknown')
 
     # Check rate limit
@@ -486,22 +436,10 @@ async def rate_limit_middleware(request: Request, call_next):
     response = await call_next(request)
     return response
 
-
-# Proxy Headers Middleware
-# Configuration loaded from admin_settings.json
-# Supports flexible proxy architectures (Nginx, Caddy, etc.)
-# IMPORTANT: This middleware must be declared AFTER rate_limit_middleware
-# so that it executes FIRST and sets client_ip before rate limiting checks it
+# Configure IP - Proxy Header Extraction Middleware
 @app.middleware("http")
 async def trust_proxy_headers(request: Request, call_next):
-    """
-    Extract client IP from proxy headers based on admin configuration.
-
-    Supports flexible proxy configurations by reading:
-    - is_behind_proxy: Whether the app is behind a reverse proxy
-    - proxy_header: Which header to read (X-Forwarded-For, X-Real-IP, CF-Connecting-IP, etc.)
-    - trusted_proxies: List of proxy IPs/CIDRs to trust
-    """
+    # Extract client IP from proxy headers based on admin configuration.
     admin_settings = get_admin_settings()
 
     # If not behind a proxy, use direct connection IP only
@@ -544,8 +482,7 @@ async def trust_proxy_headers(request: Request, call_next):
                 header_value = request.headers.get(admin_settings.proxy.proxy_header)
 
                 if header_value:
-                    # Some headers like X-Forwarded-For may contain multiple IPs (client, proxy1, proxy2, ...)
-                    # Take the first one (leftmost) which is the original client
+                    # Some headers like X-Forwarded-For may contain multiple IPs, take the leftmost IP and assume it is the original client
                     if ',' in header_value:
                         client_ip = header_value.split(',')[0].strip()
                     else:
@@ -565,7 +502,7 @@ async def trust_proxy_headers(request: Request, call_next):
     request.state.client_ip = client_ip
 
     # Debug logging for proxy setup validation
-    # Controlled by admin_settings to prevent header leakage in production
+    # Controlled by admin settings to prevent header leakage in production
     if not hasattr(trust_proxy_headers, 'logged_count'):
         trust_proxy_headers.logged_count = 0
 
@@ -579,24 +516,22 @@ async def trust_proxy_headers(request: Request, call_next):
     return response
 
 
-# Mount static files (HTML, CSS, JS) to be served by FastAPI
-# Requests to /assets/* will serve files from the assets directory
+# Mount static files to be served by FastAPI
 app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
-# WebSocket connections per download for real-time progress updates
+# WebSocket connections per download for real-time updates
 active_connections: dict[str, list[WebSocket]] = {}
 # WebSocket connections for real-time log streaming
 log_websockets: list[WebSocket] = []
 
-# Server restart management
+# Server Restart Management
 server_start_time: Optional[datetime] = None
 graceful_shutdown_requested: bool = False
 
 # WebSocket connection limits to prevent memory exhaustion
 MAX_LOG_WEBSOCKET_CONNECTIONS = 100
-WEBSOCKET_IDLE_TIMEOUT = 300  # 5 minutes in seconds - disconnect idle connections
+WEBSOCKET_IDLE_TIMEOUT = 300  # Disconnet Idle WebSocket Connections
 
-# In-memory circular buffers for logs (dual-system)
 # Admin logs: system management, security, user operations
 admin_log_buffer = deque(maxlen=1000)
 admin_log_sequence = 0
@@ -605,45 +540,39 @@ admin_log_sequence = 0
 user_log_buffer = deque(maxlen=1000)
 user_log_sequence = 0
 
-# Legacy buffer maintained temporarily for backwards compatibility
 # Stores last 1000 log entries for quick retrieval by the frontend
-# maxlen=1000 means old logs are automatically dropped when buffer fills
 log_buffer = deque(maxlen=1000)
 
 # Global sequence counter for logs
-# This never resets, unlike buffer index which wraps at 1000
-# Allows frontend to track logs even after buffer wraparound
 log_sequence = 0
 
 # Component classification for log routing
-# Components are classified into 'admin' or 'user' log streams
-# This allows automatic routing of logs based on their nature
 ADMIN_LOG_COMPONENTS = {
-    "User Management",    # User CRUD operations
+    "User Management",   # User CRUD operations
     "Admin",             # Database operations, system config
     "Settings",          # Admin settings changes
     "System",            # Startup, shutdown, hardware detection
     "Security",          # Security events, rate limiting
     "Auth",              # Login/logout events (legacy)
     "Authentication"     # Login/logout events (current)
+    "Cleanup",           # File Cleanup Operations
+    "Share"              # Share link creation
 }
 
 USER_LOG_COMPONENTS = {
     "Download",          # Download operations
     "Upload",            # File uploads
-    "Queue",            # Queue operations
-    "YT-DLP",           # yt-dlp output
-    "YT-DLP-ERR",       # yt-dlp errors
-    "API",              # General API calls
-    "Playlist",         # Playlist extraction and processing
-    "Share",            # Share link creation
-    "Tools",            # Conversion tools
-    "ToolConversion",   # Tool conversions
-    "VideoTransform",   # Video transformations
-    "Thumbnail",        # Thumbnail generation
-    "Cleanup",          # File cleanup
-    "Cookies",          # Cookie file operations
-    "ConversionQueue"   # Conversion queue
+    "Queue",             # Download Queue Operations
+    "YT-DLP",            # yt-dlp output
+    "YT-DLP-ERR",        # yt-dlp errors
+    "API",               # General API calls
+    "Playlist",          # Playlist extraction and processing
+    "Tools",             # Conversion tools
+    "ToolConversion",    # Tool conversions
+    "VideoTransform",    # Video transformations
+    "Thumbnail",         # Thumbnail generation
+    "Cookies",           # Cookie File Operations
+    "ConversionQueue"    # Conversion Queue Operations
 }
 
 # Rate limiting data structures
@@ -658,22 +587,7 @@ last_cleanup_time = 0
 
 
 def check_rate_limit(client_ip: str) -> bool:
-    """
-    Check if a client has exceeded the rate limit using a sliding window.
-    Prevents abuse by limiting requests per IP address.
-    
-    Rate limit parameters are loaded from admin_settings.json:
-    - max_requests_per_window
-    - window_seconds
-    - max_tracked_ips (cleanup if exceeded)
-    - cleanup_interval_seconds
-
-    Args:
-        client_ip: The client's IP address
-
-    Returns:
-        True if request is allowed, False if rate limited
-    """
+    # Check if a client has exceeded the rate limit using a sliding window.
     global last_cleanup_time
     
     admin_settings = get_admin_settings()
@@ -686,12 +600,12 @@ def check_rate_limit(client_ip: str) -> bool:
     window_seconds = admin_settings.rate_limit.window_seconds
     max_requests = admin_settings.rate_limit.max_requests_per_window
     
-    # Cleanup old IPs periodically to prevent unbounded memory growth
+    # Cleanup old IPs periodically to prevent memory leaks
     if now - last_cleanup_time > admin_settings.rate_limit.cleanup_interval_seconds:
         _cleanup_rate_limit_store()
         last_cleanup_time = now
     
-    # Limit number of tracked IPs to prevent memory exhaustion
+    # Limit number of tracked IPs to prevent memory leaks
     if len(rate_limit_store) >= admin_settings.rate_limit.max_tracked_ips:
         _cleanup_rate_limit_store()
     
@@ -702,7 +616,6 @@ def check_rate_limit(client_ip: str) -> bool:
     requests = rate_limit_store[client_ip]
 
     # Remove old request timestamps outside the current time window
-    # This implements a sliding window rate limit
     cutoff = now - window_seconds
     while requests and requests[0] < cutoff:
         requests.popleft()
@@ -717,20 +630,11 @@ def check_rate_limit(client_ip: str) -> bool:
 
 
 def _cleanup_rate_limit_store():
-    """
-    Remove IPs with no recent activity from the rate limit store.
-    
-    Prevents unbounded memory growth in long-running applications
-    by removing inactive IPs. Triggered by time interval or IP count.
-    
-    Uses two-tier cleanup:
-    - First: Remove IPs inactive for 30 minutes
-    - If still over 5000 IPs: Aggressively remove IPs inactive for 5 minutes
-    """
+    # Remove IPs with no recent activity from the rate limit store.
     global rate_limit_store
     now = datetime.now(timezone.utc).timestamp()
     
-    # First pass: Remove IPs with no requests in the last 30 minutes
+    # 1. Remove IPs with no requests in the last 30 minutes
     cutoff_time = now - 1800  # 30 minutes
     expired_ips = [
         ip for ip, reqs in rate_limit_store.items()
@@ -744,7 +648,7 @@ def _cleanup_rate_limit_store():
     if removed_count > 0:
         logger.debug(f"Rate limit cleanup: removed {removed_count} inactive IPs (30+ min)")
     
-    # Second pass: If still too many IPs, do aggressive cleanup (5 minutes)
+    # 2. If still too many IPs, do aggressive cleanup (5 minutes)
     if len(rate_limit_store) > 5000:
         aggressive_cutoff = now - 300  # 5 minutes
         expired_ips = [
@@ -759,19 +663,11 @@ def _cleanup_rate_limit_store():
             logger.warning(f"Rate limit aggressive cleanup: removed {len(expired_ips)} IPs (5+ min) - store was at {len(rate_limit_store) + len(expired_ips)} entries")
 
 
-# Download timeout configuration (in seconds)
-# Prevent hung downloads from consuming resources indefinitely
-# Most video downloads complete within this timeframe
+# Download timeout configuration (in seconds), prevent stale downloads from growing indefinitely
 DOWNLOAD_TIMEOUT_SECONDS = 3600  # 1 hour
 
-
 async def download_with_timeout(download_id: str, url: str, cookies_file: Optional[str] = None):
-    """
-    Wrapper that adds timeout to download operations.
-    Prevents hung downloads from consuming resources indefinitely.
-
-    If timeout is exceeded, the download is forcefully terminated.
-    """
+    # Wrapper for Download Timeouts
     try:
         await asyncio.wait_for(
             YtdlpService.download_video(download_id, url, cookies_file),
@@ -794,21 +690,15 @@ async def download_with_timeout(download_id: str, url: str, cookies_file: Option
             "status": "failed",
             "error": error_msg
         })
-
-        # Re-raise to let the wrapper handle cleanup
         raise
 
 
 # Download Queue Manager
 class DownloadQueueManager:
-    """
-    Manages the download queue with concurrent download limiting.
-    Ensures only a limited number of downloads run simultaneously
-    to prevent resource exhaustion.
-    """
+    # Manages downloads with queue to make sure only a limited number of downloads run simultaneously.
 
     def __init__(self):
-        # AsyncIO queue for pending downloads
+        # Queue for pending downloads
         self.queue: asyncio.Queue = asyncio.Queue()
 
         # Set of currently running download IDs
@@ -818,32 +708,24 @@ class DownloadQueueManager:
         self.processing_task: Optional[asyncio.Task] = None
 
     async def add_to_queue(self, download_id: str, url: str, cookies_file: Optional[str] = None):
-        """
-        Add a download to the queue.
-        Downloads are processed in FIFO order when capacity is available.
-        """
+        # Add a download to the queue. Downloads are processed in order when capacity is available.
         await self.queue.put((download_id, url, cookies_file))
         await emit_log("INFO", "Queue", f"Download {download_id[:8]}... added to queue. Queue size: {self.queue.qsize()}", download_id)
 
     async def process_queue(self):
-        """
-        Continuously process downloads from the queue.
-        Respects max_concurrent_downloads setting and disk space limits.
-        This runs as a background task for the entire application lifetime.
-        """
+        # Continuously process downloads from the queue.
+        # Respects max_concurrent_downloads setting and Disk Space limits.
         while True:
             try:
                 # Wait for a download to be added to the queue (blocking)
                 download_id, url, cookies_file = await self.queue.get()
 
-                # Wait until we have capacity for another download
-                # This enforces the max_concurrent_downloads limit
+                # Wait until we have capacity for another download, enforcing the max_concurrent_downloads limit
                 max_concurrent = settings.get("max_concurrent_downloads", 2)
                 while len(self.active_downloads) >= max_concurrent:
                     await asyncio.sleep(1)
 
-                # Check if we have enough free disk space before starting
-                # This prevents filling up the disk completely
+                # Check if we have enough free disk space, enforing min_disk_space_mb limit
                 free_space_mb = shutil.disk_usage("downloads").free / (1024 * 1024)
                 min_space = settings.get("min_disk_space_mb", 1000)
 
@@ -859,27 +741,20 @@ class DownloadQueueManager:
                 self.active_downloads.add(download_id)
                 await emit_log("INFO", "Queue", f"Starting download {download_id[:8]}... ({len(self.active_downloads)}/{max_concurrent} active)", download_id)
 
-                # Create a new async task for the download (runs in background)
-                # This allows the queue processor to continue handling other downloads
-                # Wrapped with timeout to prevent hung downloads
+                # Create a new async task for the download, wrapped with timeout to prevent hung downloads
                 asyncio.create_task(self._download_wrapper(download_id, url, cookies_file))
 
                 # Mark this queue item as processed
                 self.queue.task_done()
 
             except Exception as e:
-                # Log queue processing errors and continue
-                # Don't let a single error crash the entire queue system
+                # Log queue processing errors and continue processing
                 await emit_log("ERROR", "Queue", f"Queue processing error: {str(e)}")
                 await asyncio.sleep(1)
 
     async def _download_wrapper(self, download_id: str, url: str, cookies_file: Optional[str]):
-        """
-        Wrapper around the actual download function.
-        Ensures the download is always removed from active_downloads
-        even if the download fails or throws an exception.
-        Includes timeout protection to prevent hung downloads.
-        """
+        # Wrapper around the download function.
+        # Ensures the download is always removed from active_downloads even if the download fails or throws an exception.
         try:
             await download_with_timeout(download_id, url, cookies_file)
         except asyncio.TimeoutError:
@@ -894,10 +769,7 @@ class DownloadQueueManager:
             await emit_log("INFO", "Queue", f"Download {download_id[:8]}... finished. Active downloads: {len(self.active_downloads)}", download_id)
 
     async def restore_from_database(self):
-        """
-        Restore queued and downloading items from database on startup.
-        This allows recovery from application crashes or restarts.
-        """
+        # Restore queued and downloading items from database on startup.
         try:
             with get_db() as db:
                 # Find all downloads that were queued or downloading when app stopped
@@ -928,10 +800,7 @@ class DownloadQueueManager:
             await emit_log("ERROR", "Queue", f"Failed to restore queue: {str(e)}")
 
     def start_processing(self):
-        """
-        Start the background queue processor task.
-        Called once during application startup.
-        """
+        # Start the background queue processor task, called during application startup.
         if self.processing_task is None or self.processing_task.done():
             self.processing_task = asyncio.create_task(self.process_queue())
 
@@ -941,12 +810,7 @@ download_queue = DownloadQueueManager()
 
 # Conversion Queue Manager
 class ConversionQueueManager:
-    """
-    Manages the conversion queue for both MP3 conversions and video transforms.
-    Ensures only a limited number of conversions run simultaneously
-    to prevent resource exhaustion.
-    Both job types are processed in FIFO order.
-    """
+    # Manages the conversion queue for both MP3 conversions and video transforms.
 
     def __init__(self):
         # AsyncIO queue for pending conversions
@@ -960,36 +824,20 @@ class ConversionQueueManager:
         self.processing_task: Optional[asyncio.Task] = None
 
     async def add_to_queue(self, job_type: str, conversion_id: str, **job_params):
-        """
-        Add a conversion job to the queue.
-        Jobs are processed in FIFO order when capacity is available.
-
-        Args:
-            job_type: Either "mp3" or "video_transform"
-            conversion_id: UUID of the conversion record
-            **job_params: Job-specific parameters
-                For mp3: source_path, output_path, bitrate
-                For video_transform: download_id, source_path, transform_type, internal_filename
-        """
+        # Add a conversion job to the queue.
         await self.queue.put((job_type, conversion_id, job_params))
         await emit_log("INFO", "ConversionQueue",
                      f"{job_type.upper()} job {conversion_id[:8]}... added to queue. Queue size: {self.queue.qsize()}",
                      conversion_id)
 
     async def process_queue(self):
-        """
-        Continuously process conversions from the queue.
-        Handles both MP3 conversions and video transforms.
-        Respects max_concurrent_conversions setting and disk space limits.
-        This runs as a background task for the entire application lifetime.
-        """
+        # Continuously process conversions from the queue.
         while True:
             try:
                 # Wait for a job to be added to the queue (blocking)
                 job_type, conversion_id, job_params = await self.queue.get()
 
                 # Wait until we have capacity for another conversion
-                # Default to 1 concurrent conversion (CPU-intensive FFmpeg operations)
                 max_concurrent = settings.get("max_concurrent_conversions", 1)
                 while len(self.active_conversions) >= max_concurrent:
                     await asyncio.sleep(1)
@@ -1032,16 +880,7 @@ class ConversionQueueManager:
                 await asyncio.sleep(1)
 
     async def _job_wrapper(self, job_type: str, conversion_id: str, job_params: dict):
-        """
-        Wrapper around the actual job processing function.
-        Ensures the job is always removed from active_conversions
-        even if the job fails or throws an exception.
-
-        Args:
-            job_type: Either "mp3" or "video_transform"
-            conversion_id: UUID of the conversion record
-            job_params: Dictionary of job-specific parameters
-        """
+        # Wrapper around the actual job processing function.
         try:
             if job_type == "mp3":
                 # MP3 conversion job
@@ -1073,10 +912,7 @@ class ConversionQueueManager:
                          conversion_id)
 
     async def restore_from_database(self):
-        """
-        Restore queued and converting items from database on startup.
-        This allows recovery from application crashes or restarts.
-        """
+        # Restore queued and converting items from database on startup.
         try:
             with get_db() as db:
                 # Find all conversions that were queued or converting when app stopped
@@ -1143,10 +979,7 @@ class ConversionQueueManager:
             await emit_log("ERROR", "ConversionQueue", f"Failed to restore queue: {str(e)}")
 
     def start_processing(self):
-        """
-        Start the background queue processor task.
-        Called once during application startup.
-        """
+        # Start the background queue processor task, called during application startup.
         if self.processing_task is None or self.processing_task.done():
             self.processing_task = asyncio.create_task(self.process_queue())
 
@@ -1154,7 +987,7 @@ class ConversionQueueManager:
 # Global conversion queue manager instance
 conversion_queue = ConversionQueueManager()
 
-# Global hardware acceleration cache (detected at startup)
+# Global hardware acceleration cache
 hardware_acceleration = {
     "nvenc": False,
     "amf": False,
@@ -1165,55 +998,39 @@ hardware_acceleration = {
 }
 
 # Global dictionary to track active conversion processes for cancellation
-# Key: conversion_id, Value: (process, temp_output_path)
 active_conversion_processes = {}
 
-# Global cache for all hardware information (populated at startup)
-# Clients fetch this once and cache in browser localStorage
+# Global cache for all hardware information, clients fetch this once and cache in browser localStorage
 hardware_info_cache = None
 
 
 # Filename sanitization
 def sanitize_filename(filename: str) -> str:
-    """
-    Sanitize filename to handle special characters, emojis, and problematic characters.
-    This is critical for:
-    - Filesystem compatibility across different operating systems
-    - URL encoding when serving files for download
-    - Preventing security issues with path traversal or special characters
-    """
+    # Sanitize filename to handle special characters, emojis, and problematic characters.
     if not filename:
         return filename
 
-    # Split filename into base name and extension
-    # We preserve the extension to maintain file type information
+    # Split filename into base name and extension, maintains file type information
     base, ext = os.path.splitext(filename)
 
     # Normalize unicode characters
-    # NFKD breaks down combined characters (like é) into base + accent
-    # This helps with filesystem compatibility
     base = unicodedata.normalize('NFKD', base)
 
-    # Replace filesystem-unsafe characters with underscores
-    # These characters have special meaning in filesystems or cause issues
+    # Replace filesystem-unsafe characters with placeholder character
     unsafe_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\n', '\r', '\t']
     for char in unsafe_chars:
         base = base.replace(char, '_')
 
-    # Remove control characters (invisible characters that can cause issues)
-    # unicodedata.category(char)[0] returns the general category (C = control)
+    # Remove invisible characters that can cause issues
     base = ''.join(char for char in base if unicodedata.category(char)[0] != 'C')
 
     # Remove leading/trailing spaces and dots
-    # Windows has issues with filenames starting/ending with these
     base = base.strip('. ')
 
     # Collapse multiple consecutive underscores or spaces into a single underscore
-    # This prevents filenames like "video___title____here"
     base = re.sub(r'[_\s]+', '_', base)
 
     # Limit filename length to prevent filesystem issues
-    # 255 is the limit on most filesystems, we use 200 to leave room for extensions
     max_length = 200
     if len(base.encode('utf-8')) > max_length:
         # Truncate at byte level to handle multi-byte UTF-8 characters correctly
@@ -1221,8 +1038,7 @@ def sanitize_filename(filename: str) -> str:
         base = base.encode('utf-8')[:max_length].decode('utf-8', errors='ignore')
         base = base.rstrip('_')
 
-    # Ensure we have at least some content for the filename
-    # If everything was stripped out, use a default name
+    # Ensure we have at least some content for the filename, use a default name if no filename exists
     if not base or base == '_':
         base = 'video'
 
@@ -1230,18 +1046,8 @@ def sanitize_filename(filename: str) -> str:
 
 
 async def embed_thumbnail_in_video(video_path: str, thumbnail_path: str, download_id: Optional[str] = None) -> bool:
-    """
-    Embed a thumbnail image into a video file as cover art/poster frame.
-    This allows the thumbnail to be displayed in file explorers and video players.
-
-    Args:
-        video_path: Path to the video file
-        thumbnail_path: Path to the thumbnail image
-        download_id: Optional download ID for logging
-
-    Returns:
-        True if successful, False otherwise
-    """
+    # Embed a thumbnail image into a video file as cover art/poster frame.
+    # This allows the thumbnail to be displayed in external file explorers and video players.
     try:
         # Create a temporary output file path
         temp_output = f"{video_path}.temp.mp4"
@@ -1249,22 +1055,16 @@ async def embed_thumbnail_in_video(video_path: str, thumbnail_path: str, downloa
         await emit_log("INFO", "Thumbnail", f"Embedding thumbnail into video: {os.path.basename(video_path)}", download_id)
 
         # Use ffmpeg to embed the thumbnail as cover art
-        # -i video_path: input video
-        # -i thumbnail_path: input thumbnail
-        # -map 0: map all streams from first input (video)
-        # -map 1: map the thumbnail as an additional stream
-        # -c copy: copy all streams without re-encoding
-        # -c:v:1 mjpeg: encode the thumbnail stream as MJPEG (required for cover art)
-        # -disposition:v:1 attached_pic: mark the thumbnail as an attached picture/cover art
+        
         embed_process = await asyncio.create_subprocess_exec(
             'ffmpeg',
-            '-i', video_path,
-            '-i', thumbnail_path,
-            '-map', '0',
-            '-map', '1',
-            '-c', 'copy',
-            '-c:v:1', 'mjpeg',
-            '-disposition:v:1', 'attached_pic',
+            '-i', video_path,                       # -i video_path: input video
+            '-i', thumbnail_path,                   # -i thumbnail_path: input thumbnail
+            '-map', '0',                            # -map 0: map all streams from first input (video)
+            '-map', '1',                            # -map 1: map the thumbnail as an additional stream
+            '-c', 'copy',                           # -c copy: copy all streams without re-encodin
+            '-c:v:1', 'mjpeg',                      # -c:v:1 mjpeg: encode the thumbnail stream as MJPEG (required for cover art)
+            '-disposition:v:1', 'attached_pic',     # -disposition:v:1 attached_pic: mark the thumbnail as an attached picture/cover art
             temp_output,
             '-y',  # Overwrite output file if it exists
             stdout=asyncio.subprocess.PIPE,
@@ -1314,29 +1114,16 @@ async def embed_thumbnail_in_video(video_path: str, thumbnail_path: str, downloa
 
 # Logging system
 class LogEntry(BaseModel):
-    """
-    Data model for a single log entry.
-    Used by Pydantic for validation and serialization.
-    """
-    sequence: int          # Ever-increasing sequence number
-    timestamp: str         # ISO 8601 timestamp in UTC
-    level: str            # INFO, WARNING, ERROR, etc.
-    component: str        # Which part of the system generated the log
-    message: str          # The actual log message
-    download_id: Optional[str] = None  # Associated download ID (if applicable)
-
+    # Data model for a single log entry.
+    sequence: int                       # Ever-increasing sequence number
+    timestamp: str                      # ISO 8601 timestamp in UTC
+    level: str                          # INFO, WARNING, ERROR, etc.
+    component: str                      # Which part of the system generated the log
+    message: str                        # The actual log message
+    download_id: Optional[str] = None   # Associated download ID (if applicable)    
 
 async def emit_log(level: str, component: str, message: str, download_id: Optional[str] = None):
-    """
-    Emit a log entry to all logging destinations with automatic routing.
-
-    Logs are automatically routed to either admin or user log streams
-    based on the component. This allows existing code to work without
-    changes while providing separate log views.
-
-    Admin logs: User management, database ops, settings, security
-    User logs: Downloads, conversions, file operations
-    """
+    # Emit a log entry to all logging destinations with automatic routing.
     global admin_log_sequence, user_log_sequence, log_sequence
 
     # Determine log type based on component classification
@@ -1351,7 +1138,7 @@ async def emit_log(level: str, component: str, message: str, download_id: Option
     # Create timestamp once for consistency
     timestamp = datetime.now(timezone.utc).isoformat()
 
-    # Map our custom log levels to Python's logging levels
+    # Map our log levels to Python's built-in logging levels
     log_level_map = {
         "DEBUG": logging.DEBUG,
         "INFO": logging.INFO,
@@ -1362,7 +1149,6 @@ async def emit_log(level: str, component: str, message: str, download_id: Option
     file_log_level = log_level_map.get(level, logging.INFO)
 
     # Format the message for file logging
-    # Include download ID if present for easier tracking
     log_msg = message
     if download_id:
         log_msg = f"[{download_id[:8]}] {message}"
@@ -1396,7 +1182,6 @@ async def emit_log(level: str, component: str, message: str, download_id: Option
         user_file_logger.log(file_log_level, log_msg, extra={'component': component})
 
     # Also write to legacy buffer for backwards compatibility
-    # Can be removed once transition is complete
     log_sequence += 1
     legacy_entry = LogEntry(
         sequence=log_sequence,
@@ -1410,21 +1195,17 @@ async def emit_log(level: str, component: str, message: str, download_id: Option
     app_file_logger.log(file_log_level, log_msg, extra={'component': component})
 
     # Debug logging to console for troubleshooting
-    # Track how many logs have been emitted using a function attribute
     if not hasattr(emit_log, 'call_count'):
         emit_log.call_count = 0
     emit_log.call_count += 1
 
     # Log to console selectively to avoid spam
-    # Show first 20 logs to verify logging works, then every 50th log
     if emit_log.call_count <= 20 or emit_log.call_count % 50 == 0:
         log_type = "ADMIN" if is_admin_log else "USER"
         logger.info(f"[LOG #{emit_log.call_count}] {log_type} | {level} | {component} | {message[:100]}")
         logger.info(f"[LOG] Sequences - Admin: {admin_log_sequence}, User: {user_log_sequence}")
 
-    # Broadcast to WebSocket clients (if any are connected)
-    # Note: Currently WebSocket logging is not used, switched to HTTP polling
-    # Send the appropriate log entry based on log type
+    # Note: Currently WebSocket logging is not used, switched to HTTP polling for log streaming
     disconnected = []
     for ws in log_websockets:
         try:
@@ -1446,7 +1227,7 @@ async def emit_log(level: str, component: str, message: str, download_id: Option
 # These models validate incoming requests and serialize outgoing responses
 
 class DownloadRequest(BaseModel):
-    """Request body for creating a new download"""
+    # Request body for creating a new download
     url: str                                # Video URL to download
     cookies_file: Optional[str] = None      # Optional cookies file for authentication
     is_public: bool = True                  # Visibility flag (defaults to public)
@@ -1454,7 +1235,7 @@ class DownloadRequest(BaseModel):
 
 
 class DownloadResponse(BaseModel):
-    """Response model for download information"""
+    # Response model for download information
     model_config = ConfigDict(from_attributes=True)  # Allows creation from ORM objects
 
     id: str
@@ -1474,13 +1255,13 @@ class DownloadResponse(BaseModel):
 
 
 class DownloadsListResponse(BaseModel):
-    """Response model for list of downloads with privacy info"""
+    # Response model for list of downloads with privacy info
     downloads: List[DownloadResponse]
     hidden_active_count: int = 0  # Number of private active downloads from other users
 
 
 class VersionInfo(BaseModel):
-    """System version information"""
+    # System version information
     ytdlp_version: str                      # yt-dlp version string
     app_version: str                        # Application version
     python_version: str                     # Python version string
@@ -1488,7 +1269,7 @@ class VersionInfo(BaseModel):
 
 
 class DiskSpaceInfo(BaseModel):
-    """Disk space information"""
+    # Disk space information
     total: int                              # Total disk space in bytes
     used: int                               # Used disk space in bytes
     free: int                               # Free disk space in bytes
@@ -1496,21 +1277,21 @@ class DiskSpaceInfo(BaseModel):
 
 
 class CleanupStats(BaseModel):
-    """Statistics from cleanup operation"""
+    # Statistics from cleanup operation
     downloads_removed: int                  # Number of database entries removed
     files_removed: int                      # Number of files deleted
     space_freed: int                        # Space freed in bytes
 
 
 class ConversionCleanupStats(BaseModel):
-    """Statistics from conversion cleanup operation"""
+    # Statistics from conversion cleanup operation
     conversions_removed: int                # Number of conversion entries removed
     files_removed: int                      # Number of files deleted
     space_freed: int                        # Space freed in bytes
 
 
 class FileInfo(BaseModel):
-    """Information about a downloaded file"""
+    # Information about a downloaded file
     id: str                                  # Download ID for API operations
     filename: str                            # Display filename (user-friendly name)
     size: int                               # File size in bytes
@@ -1520,19 +1301,19 @@ class FileInfo(BaseModel):
 
 
 class DownloadZipRequest(BaseModel):
-    """Request body for downloading multiple files as ZIP"""
+    # Request body for downloading multiple files as ZIP
     download_ids: List[str]                 # List of download IDs to include
 
 
 # Tool Conversion API Models
 class VideoToMp3Request(BaseModel):
-    """Request body for video to MP3 conversion"""
+    # Request body for video to MP3 conversion
     source_download_id: str                 # UUID of source video
     audio_quality: int = 128                # Audio bitrate in kbps (96, 128, 192)
 
 
 class ToolConversionResponse(BaseModel):
-    """Response model for tool conversion status"""
+    # Response model for tool conversion status
     model_config = ConfigDict(from_attributes=True)
 
     id: str                                  # Conversion ID
@@ -1549,20 +1330,20 @@ class ToolConversionResponse(BaseModel):
 
 
 class VideoTransformRequest(BaseModel):
-    """Request body for video transformation"""
+    # Request body for video transformation
     download_id: str                         # UUID of video to transform
     transform_type: str                      # Type of transformation (hflip, vflip, rotate90, rotate180, rotate270)
 
 
 # Authentication Pydantic Models
 class LoginRequest(BaseModel):
-    """Request body for user login"""
+    # Request body for user login
     username: str
     password: str
 
 
 class LoginResponse(BaseModel):
-    """Response body for successful login"""
+    # Response body for successful login
     access_token: str
     token_type: str
     expires_in: int  # seconds
@@ -1571,7 +1352,7 @@ class LoginResponse(BaseModel):
 
 
 class UserInfoResponse(BaseModel):
-    """Response body for current user info"""
+    # Response body for current user info
     user_id: str
     username: str
     is_admin: bool
@@ -1579,7 +1360,7 @@ class UserInfoResponse(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """Response model for user data"""
+    # Response model for user data
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -1593,14 +1374,14 @@ class UserResponse(BaseModel):
 
 
 class CreateUserRequest(BaseModel):
-    """Request body for creating a new user"""
+    # Request body for creating a new user
     username: str
     password: str
     is_admin: bool = False
 
 
 class UpdateUserRequest(BaseModel):
-    """Request body for updating a user"""
+    # Request body for updating a user
     is_admin: Optional[bool] = None
     is_disabled: Optional[bool] = None
     new_password: Optional[str] = None
@@ -1608,11 +1389,8 @@ class UpdateUserRequest(BaseModel):
 
 # Database Service - Handles all database operations
 class DatabaseService:
-    """
-    Static service class for database operations.
-    Provides methods for querying and updating download records.
-    All methods take a database session as the first parameter.
-    """
+    # Static service class for database operations.
+    # All methods take a database session as the first parameter.
     @staticmethod
     def get_all_downloads(db: Session) -> List[Download]:
         return db.query(Download).order_by(Download.created_at.desc()).all()
@@ -1627,10 +1405,8 @@ class DatabaseService:
 
     @staticmethod
     def get_visible_downloads(db: Session, user_id: str) -> List[Download]:
-        """
-        Get downloads visible to a regular user.
-        Returns: public downloads + user's own private downloads
-        """
+        # Get downloads visible to a regular user.
+        # Returns public downloads + user's own private downloads
         return db.query(Download).filter(
             or_(
                 Download.is_public == True,
@@ -1644,9 +1420,7 @@ class DatabaseService:
         user_id: str,
         status: DownloadStatus
     ) -> List[Download]:
-        """
-        Get downloads visible to a regular user, filtered by status.
-        """
+        # Get downloads visible to a regular user, filtered by status.
         return db.query(Download).filter(
             and_(
                 Download.status == status,
@@ -1737,7 +1511,7 @@ class DatabaseService:
 
     @staticmethod
     def find_orphaned_files() -> List[str]:
-        """Find files in downloads/ that don't have database entries"""
+        # Find files in downloads/ that don't have database entries
         if not os.path.exists("downloads"):
             return []
 
@@ -1758,7 +1532,7 @@ class DatabaseService:
 
     @staticmethod
     def remove_orphaned_files() -> tuple[int, int]:
-        """Remove orphaned files and return (count, bytes_freed)"""
+        # Remove orphaned files and return (count, bytes_freed)
         orphaned = DatabaseService.find_orphaned_files()
         bytes_freed = 0
 
@@ -1776,29 +1550,20 @@ class DatabaseService:
 
 # YT-DLP Service
 class YtdlpService:
-    """
-    Service for interacting with yt-dlp to download videos.
-    Handles the subprocess execution, progress tracking, and file management.
-    All output from yt-dlp is parsed and logged for the frontend to display.
-    """
+    # Service for interacting with yt-dlp to download videos.
+    # Handles the subprocess execution, progress tracking, and file management.
 
     @staticmethod
     async def extract_playlist_urls(url: str, cookies_file: Optional[str] = None) -> List[str]:
-        """
-        Extract all video URLs from a playlist without downloading.
-        Uses yt-dlp's --flat-playlist and --get-url to extract individual video URLs.
-
-        Returns:
-            List of video URLs in the playlist, or empty list if extraction fails
-        """
+        # Extract all video URLs from a playlist without downloading, for individual queueing.
         await emit_log("INFO", "Playlist", f"Starting playlist extraction with yt-dlp")
 
         cmd = [
             sys.executable, "-m", "yt_dlp",
             "--flat-playlist",  # Don't download, just list
             "--yes-playlist",   # Explicitly process as playlist
-            "--get-url",        # Get video URLs (more reliable than --print url)
-            "--skip-download",  # Don't download, just extract info
+            "--get-url",        # Get video URLs
+            "--skip-download",  # Don't download, extract info
             url
         ]
 
@@ -1870,19 +1635,8 @@ class YtdlpService:
 
     @staticmethod
     async def download_video(download_id: str, url: str, cookies_file: Optional[str] = None):
-        """
-        Download a video using yt-dlp as a subprocess.
-
-        This method:
-        - Constructs the yt-dlp command with appropriate flags
-        - Spawns the download process
-        - Monitors stdout/stderr for progress and errors
-        - Updates database with progress and completion status
-        - Logs all activity for frontend display
-        - Handles errors and marks downloads as failed if needed
-
-        The download runs asynchronously so multiple downloads can run concurrently.
-        """
+        # Download a video using yt-dlp subproceses.
+        # Downloads runs asynchronously so multiple downloads can run concurrently.
 
         await emit_log("INFO", "Download", f"Starting download for URL: {url}", download_id)
 
@@ -1895,7 +1649,7 @@ class YtdlpService:
             "--convert-thumbnails", "jpg",
             "--no-playlist",
             "--newline",
-            "--restrict-filenames",  # Restrict filenames to ASCII characters and common safe characters
+            "--restrict-filenames",  # Restrict filenames to safe characters, names are still sanitized later
             url
         ]
 
@@ -2008,7 +1762,7 @@ class YtdlpService:
             await process.wait()
 
             if process.returncode == 0:
-                # Success
+                # Success Case
                 if filename and os.path.exists(filename):
                     file_size = os.path.getsize(filename)
                     original_basename = os.path.basename(filename)
@@ -2016,9 +1770,7 @@ class YtdlpService:
                     # Apply additional sanitization to the filename for display
                     sanitized_basename = sanitize_filename(original_basename)
 
-                    # Generate UUID-based internal filename for storage
-                    # This isolates file operations from user-generated names
-                    # Use same UUID for both video and thumbnail
+                    # Generate UUID-based internal filename for storage, this isolates file operations from user-generated names
                     file_uuid = str(uuid.uuid4())
                     file_ext = os.path.splitext(original_basename)[1]  # Keep original extension
                     internal_basename = f"{file_uuid}{file_ext}"
@@ -2034,11 +1786,10 @@ class YtdlpService:
                         sanitized_basename = original_basename
                         internal_basename = original_basename
 
-                    basename = sanitized_basename  # Display name for user
+                    basename = sanitized_basename               # Display name for user
                     internal_filename_only = internal_basename  # UUID name on disk
 
                     # Look for thumbnail file with various possible extensions and patterns
-                    # Thumbnails are created based on the ORIGINAL downloaded filename (before UUID rename)
                     thumbnail_display_name = None
                     internal_thumbnail_only = None
                     original_base_without_ext = os.path.splitext(os.path.join("downloads", original_basename))[0]
@@ -2053,7 +1804,6 @@ class YtdlpService:
                     for possible_thumb in possible_thumbs:
                         if os.path.exists(possible_thumb):
                             # Generate UUID-based thumbnail name using SAME UUID as video
-                            # This makes it easy to find matching thumbnails
                             thumb_ext = os.path.splitext(possible_thumb)[1]
                             internal_thumb_basename = f"{file_uuid}{thumb_ext}"
                             internal_thumb_path = os.path.join("downloads", internal_thumb_basename)
@@ -2074,7 +1824,7 @@ class YtdlpService:
                                 internal_thumbnail_only = thumb_basename
                             break
 
-                    # Embed thumbnail into video if we found one
+                    # Embed thumbnail into video if one is found
                     if thumbnail_display_name and internal_thumbnail_only:
                         await embed_thumbnail_in_video(internal_path, internal_thumb_path, download_id)
 
@@ -2107,7 +1857,7 @@ class YtdlpService:
                         "status": "completed"
                     })
             else:
-                # Failed
+                # Failure Case
                 stderr = await process.stderr.read()
                 error_msg = stderr.decode().strip()
 
@@ -2149,7 +1899,7 @@ class YtdlpService:
 
     @staticmethod
     async def broadcast_progress(download_id: str, message: dict):
-        """Broadcast progress to all connected WebSocket clients for this download"""
+        # Broadcast progress to all connected WebSocket Clients for this download
         if download_id in active_connections:
             disconnected = []
             for websocket in active_connections[download_id]:
@@ -2158,7 +1908,7 @@ class YtdlpService:
                 except Exception:
                     disconnected.append(websocket)
 
-            # Clean up disconnected clients
+            # Clean up Disconnected Clients
             for ws in disconnected:
                 active_connections[download_id].remove(ws)
 
@@ -2171,16 +1921,7 @@ class ToolConversionService:
     @staticmethod
     async def convert_video_to_mp3(conversion_id: str, source_path: str,
                                    output_path: str, bitrate: int):
-        """
-        Extract audio from video using FFmpeg with progress tracking.
-        Uses async subprocess to avoid blocking the event loop.
-
-        Args:
-            conversion_id: UUID of the conversion record
-            source_path: Path to source video file
-            output_path: Path for output MP3 file
-            bitrate: Audio bitrate in kbps (96, 128, 192, etc.)
-        """
+        # Extract audio from video using FFmpeg with progress tracking.
         try:
             # Update status to converting
             with get_db() as db:
@@ -2214,14 +1955,13 @@ class ToolConversionService:
                          f"Starting MP3 conversion: {bitrate} kbps", conversion_id)
 
             # FFmpeg command for MP3 conversion with progress output
-            # Using async subprocess to keep event loop responsive
             process = await asyncio.create_subprocess_exec(
                 'ffmpeg', '-y',  # Overwrite output file
                 '-i', source_path,
                 '-vn',  # No video
-                '-acodec', 'libmp3lame',  # MP3 encoder
-                '-b:a', f'{bitrate}k',  # Audio bitrate
-                '-progress', 'pipe:1',  # Progress to stdout
+                '-acodec', 'libmp3lame',    # MP3 encoder
+                '-b:a', f'{bitrate}k',      # Audio bitrate
+                '-progress', 'pipe:1',      # Progress to stdout
                 output_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
@@ -2310,18 +2050,8 @@ class ToolConversionService:
 # Video Transform Service - Handles video flipping and rotation
 class VideoTransformService:
     @staticmethod
+    # Queue a video transformation job.
     async def transform_video(download_id: str, transform_type: str):
-        """
-        Queue a video transformation job.
-        Validates inputs, creates a ToolConversion record, and adds to queue.
-
-        Args:
-            download_id: UUID of the download record
-            transform_type: Type of transformation (hflip, vflip, rotate90, rotate180, rotate270)
-
-        Returns:
-            ToolConversion: The created conversion record
-        """
         # Validate transform type
         valid_transforms = ['hflip', 'vflip', 'rotate90', 'rotate180', 'rotate270']
         if transform_type not in valid_transforms:
@@ -2379,18 +2109,7 @@ class VideoTransformService:
     @staticmethod
     async def process_transform(conversion_id: str, download_id: str, source_path: str,
                                 transform_type: str, internal_filename: str):
-        """
-        Process a video transformation (called from queue).
-        Applies the transformation using FFmpeg and updates the original file.
-
-        Args:
-            conversion_id: UUID of the conversion record
-            download_id: UUID of the download record
-            source_path: Path to the source video file
-            transform_type: Type of transformation (hflip, vflip, rotate90, rotate180, rotate270)
-            internal_filename: Internal filename of the video
-        """
-
+        # Process a video transformation from queue.
         # Create temp output path
         file_uuid = str(uuid.uuid4())
         file_ext = os.path.splitext(internal_filename)[1]
@@ -2441,8 +2160,8 @@ class VideoTransformService:
                 vf_filter = "transpose=2"  # 90° counter-clockwise
 
             # Select video encoder based on available hardware acceleration
-            video_encoder = 'libx264'  # Default CPU encoder
-            encoder_preset = []  # Additional encoder-specific options
+            video_encoder = 'libx264'   # Default CPU encoder
+            encoder_preset = []         # Additional encoder-specific options
 
             if hardware_acceleration["nvenc"]:
                 # NVIDIA NVENC - fast GPU encoding
@@ -2455,12 +2174,12 @@ class VideoTransformService:
                 encoder_preset = ['-quality', 'balanced']
                 await emit_log("INFO", "VideoTransform", "Using AMD AMF acceleration", conversion_id)
             elif hardware_acceleration["qsv"]:
-                # Intel Quick Sync Video
+                # Intel Quick Sync Video - Intel HW encoding
                 video_encoder = 'h264_qsv'
                 encoder_preset = ['-preset', 'fast']
                 await emit_log("INFO", "VideoTransform", "Using Intel Quick Sync acceleration", conversion_id)
             elif hardware_acceleration["vaapi"]:
-                # VAAPI (Linux)
+                # VAAPI Encoding
                 video_encoder = 'h264_vaapi'
                 await emit_log("INFO", "VideoTransform", "Using VAAPI acceleration", conversion_id)
             elif hardware_acceleration["videotoolbox"]:
@@ -2663,7 +2382,7 @@ class VideoTransformService:
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """Log all unhandled exceptions"""
+    # Log all unhandled exceptions
     await emit_log("ERROR", "System", f"Unhandled exception: {type(exc).__name__}: {str(exc)}")
     logger.exception("Unhandled exception", exc_info=exc)
     return JSONResponse(
@@ -2682,13 +2401,7 @@ async def get_current_user_optional(
     token: Optional[str] = None,  # Query parameter token
     db: Session = Depends(get_db_session)
 ) -> Dict[str, Any]:
-    """
-    Optional authentication dependency for file endpoints.
-
-    - Checks Authorization header first, then ?token= query parameter
-    - If JWT token is present and valid, returns authenticated user
-    - If no token or invalid token, raises 401 (all users must be authenticated)
-    """
+    # Authentication dependency for file endpoints, checks Authorization header first, then ?token= query parameter
     # Try to load admin settings
     admin_settings = None
     try:
@@ -2734,16 +2447,7 @@ async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db_session)
 ) -> Dict[str, Any]:
-    """
-    FastAPI dependency to extract and validate JWT token.
-    Raises 401 if token is missing or invalid.
-
-    This dependency:
-    - Checks if authentication is enabled
-    - Validates public endpoint whitelist
-    - Validates JWT token
-    - Verifies user exists and is not disabled
-    """
+    # FastAPI dependency to extract and validate JWT token. Raises 401 if token is missing or invalid.
     # Try to load admin settings
     admin_settings = None
     auth_enabled = True  # SECURITY: Fail secure by default
@@ -2825,10 +2529,7 @@ async def get_current_user(
 async def get_current_admin_user(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """
-    FastAPI dependency to require admin privileges.
-    Raises 403 if user is not an admin.
-    """
+    # FastAPI dependency to require admin privileges. Raises 403 if user is not an admin.
     if not current_user.get("is_admin", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -2836,30 +2537,14 @@ async def get_current_admin_user(
         )
     return current_user
 
-
-# API Endpoints
-
-# ===========================
 # Authentication Endpoints
-# ===========================
-
 @app.post("/api/auth/login", response_model=LoginResponse)
 async def login(
     request: Request,
     login_data: LoginRequest,
     db: Session = Depends(get_db_session)
 ):
-    """
-    Authenticate user and return JWT token.
-
-    Performs comprehensive authentication including:
-    - Account lockout check
-    - User existence verification
-    - Password verification
-    - Suspicious IP activity detection
-    - Login history recording
-    - Audit logging
-    """
+    # Authenticate user and return JWT token.
     admin_settings = get_admin_settings()
 
     # Extract client info
@@ -2949,13 +2634,7 @@ async def logout(
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Logout user (client-side token deletion).
-
-    Note: JWT tokens are stateless, so this endpoint primarily serves
-    to log the logout event for audit purposes. The client must delete
-    the token from storage.
-    """
+    # Logout user, client-side token deletion.
     ip_address = get_client_ip(request)
 
     # Log audit event
@@ -2978,12 +2657,7 @@ async def refresh_token(
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Refresh JWT token with new expiry.
-
-    Validates current token and issues a new one with extended expiry.
-    Useful for keeping users logged in during active sessions.
-    """
+    # Refresh JWT token with new expiry. Validates current token and issues a new one with extended expiry.
     admin_settings = get_admin_settings()
     ip_address = get_client_ip(request)
 
@@ -3022,18 +2696,10 @@ async def refresh_token(
     )
 
 
-# ===== OIDC/OAuth Authentication Endpoints =====
-
+# OIDC Authentication Endpoints
 @app.get("/api/auth/oidc/config")
 async def get_oidc_config():
-    """
-    Get public OIDC configuration for frontend.
-
-    Returns configuration needed for displaying SSO login button
-    and provider information. Does not include sensitive data.
-
-    This endpoint is PUBLIC (no authentication required).
-    """
+    # Get public OIDC configuration for frontend.
     external_auth = get_external_auth_config()
     return external_auth.get_public_config()
 
@@ -3043,14 +2709,7 @@ async def oidc_login_initiate(
     request: Request,
     db: Session = Depends(get_db_session)
 ):
-    """
-    Initiate OIDC login flow.
-
-    Generates authorization URL with PKCE (if enabled) and redirects
-    user to OIDC provider for authentication.
-
-    This endpoint is PUBLIC (no authentication required).
-    """
+    # Initiate OIDC login flow.
     admin_settings = get_admin_settings()
     external_auth = get_external_auth_config()
 
@@ -3142,14 +2801,7 @@ async def oidc_callback(
     state: str,
     db: Session = Depends(get_db_session)
 ):
-    """
-    Handle OIDC callback from provider.
-
-    Exchanges authorization code for tokens, fetches user info,
-    and logs the user in by issuing a JWT token.
-
-    This endpoint is PUBLIC (no authentication required).
-    """
+    # Handle OIDC callback from provider.
     admin_settings = get_admin_settings()
     external_auth = get_external_auth_config()
     ip_address = get_client_ip(request)
@@ -3339,9 +2991,6 @@ async def oidc_callback(
                 <p>Redirecting to application...</p>
             </div>
             <script>
-                // Store only the JWT token in localStorage
-                // SECURITY: User info (username, is_admin) is fetched from server on page load
-                // This prevents users from editing localStorage to gain privileges
                 localStorage.setItem('auth_token', '{jwt_token}');
 
                 // Redirect to main application
@@ -3524,16 +3173,7 @@ async def oidc_callback(
 # Helper functions for download visibility and access control
 
 def enrich_download_with_user(db: Session, download: Download) -> DownloadResponse:
-    """
-    Add username to download response for display purposes.
-
-    Args:
-        db: Database session
-        download: Download ORM object
-
-    Returns:
-        DownloadResponse with username populated
-    """
+    # Add username to download response
     username = None
     if download.user_id:
         user = db.query(User).filter(User.id == download.user_id).first()
@@ -3561,21 +3201,7 @@ def verify_download_access(
     download: Download,
     current_user: Dict[str, Any]
 ) -> bool:
-    """
-    Verify user has access to download.
-
-    Returns True if:
-    - Download is public (anyone can access)
-    - User is admin (can access all downloads)
-    - Download belongs to authenticated user (owner access)
-
-    Args:
-        download: Download ORM object
-        current_user: Current user from JWT token (may be "public" for unauthenticated)
-
-    Returns:
-        True if user has access, False otherwise
-    """
+    # Verify user has access to download.
     is_admin = current_user.get("is_admin", False)
     user_id = current_user.get("sub")
 
@@ -3584,7 +3210,6 @@ def verify_download_access(
         return True
 
     # From here on, download is private - only authenticated users with ownership or admin can access
-
     # Admin users can access all downloads
     if is_admin:
         return True
@@ -3602,11 +3227,7 @@ async def get_current_user_info(
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Get current user information.
-
-    Returns details about the authenticated user.
-    """
+    # Get current user information.
     user = db.query(User).filter(User.id == current_user["sub"]).first()
     if not user:
         raise HTTPException(
@@ -3624,14 +3245,7 @@ async def get_current_user_info(
 
 @app.get("/api/auth/status")
 async def get_auth_status():
-    """
-    Get authentication system status (PUBLIC endpoint).
-
-    Returns whether authentication is enabled and session configuration.
-    Used by frontend to determine if login is required.
-
-    SECURITY: Fails secure - if config can't be loaded, reports auth as enabled.
-    """
+    # Get authentication system status
     try:
         admin_settings = get_admin_settings()
 
@@ -3657,18 +3271,12 @@ async def get_auth_status():
 
 @app.get("/api/release-notes")
 async def get_release_notes():
-    """
-    Get release notes from docs/release.json (PUBLIC endpoint).
+    # Get release notes from docs/release.json (PUBLIC endpoint).
 
-    Returns version information and release history.
-    Used by login page to display release notes.
-    Current version is always pulled from APP_VERSION constant.
-    """
     try:
         import json
         with open("docs/release.json", "r") as f:
             release_data = json.load(f)
-        # Override current_version with APP_VERSION (single source of truth)
         release_data["current_version"] = APP_VERSION
         return release_data
     except FileNotFoundError:
@@ -3686,14 +3294,7 @@ async def get_release_notes():
 
 @app.get("/api/auth/check-setup")
 async def check_setup_status(db: Session = Depends(get_db_session)):
-    """
-    Check if initial setup is needed (PUBLIC endpoint).
-
-    Returns whether the application needs first-time admin setup.
-    Setup is needed when first_time_setup flag is True in SystemSettings.
-
-    SECURITY: This is a read-only check and reveals no sensitive information.
-    """
+    # Check if initial setup is needed
     try:
         settings = db.query(SystemSettings).filter(SystemSettings.id == 1).first()
 
@@ -3722,21 +3323,9 @@ async def create_first_admin(
     setup_data: dict,
     db: Session = Depends(get_db_session)
 ):
-    """
-    Create the first admin user during initial setup (PUBLIC endpoint, one-time use).
-
-    SECURITY: This endpoint ONLY works when first_time_setup flag is True.
-    Once setup is completed, the flag is set to False and this endpoint returns 403 Forbidden.
-    This prevents unauthorized admin account creation after initial setup.
-
-    Args:
-        setup_data: Dict with 'username' and 'password'
-
-    Returns:
-        Success message or error
-    """
+    # Create the first admin user during initial setup (PUBLIC endpoint, one-time use).
     try:
-        # CRITICAL SECURITY CHECK: Only allow if first_time_setup flag is True
+        # Only allow if first_time_setup flag is True
         settings = db.query(SystemSettings).filter(SystemSettings.id == 1).first()
         if not settings:
             # Create settings if they don't exist
@@ -3806,7 +3395,7 @@ async def create_first_admin(
             }
         )
 
-        # CRITICAL: Set first_time_setup to False - setup is now complete
+        #  Set first_time_setup to False
         settings.first_time_setup = False
         settings.updated_at = datetime.now(timezone.utc)
         db.commit()
@@ -3831,10 +3420,7 @@ async def create_first_admin(
         )
 
 
-# ===========================
-# User Management Endpoints (Admin Only)
-# ===========================
-
+# User Management Endpoints
 @app.post("/api/users", response_model=UserResponse)
 async def create_user(
     request: Request,
@@ -3842,16 +3428,11 @@ async def create_user(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Create a new user (ADMIN ONLY).
-
-    Validates username format and password strength, then creates
-    a new user account with hashed password.
-    """
+    # Validates username format and password strength, then creates a new user account with hashed password.
     admin_settings = get_admin_settings()
     ip_address = get_client_ip(request)
 
-    # Validate username (3-32 alphanumeric chars, underscore allowed)
+    # Validate username
     if not user_data.username or len(user_data.username) < 3 or len(user_data.username) > 32:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -3917,11 +3498,7 @@ async def list_users(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    List all users (ADMIN ONLY).
-
-    Returns all user accounts with their metadata.
-    """
+    # Returns all user accounts with their metadata.
     users = db.query(User).order_by(User.created_at.desc()).all()
     return [UserResponse.model_validate(user) for user in users]
 
@@ -3934,12 +3511,7 @@ async def update_user(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Update user account (ADMIN ONLY).
-
-    Can update: is_admin, is_disabled, password.
-    Prevents admins from disabling their own accounts.
-    """
+    # Update user account
     ip_address = get_client_ip(request)
 
     # Find user
@@ -4016,11 +3588,7 @@ async def delete_user(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Delete user account (ADMIN ONLY).
-
-    Prevents self-deletion. Deletes user and all associated records.
-    """
+    # Delete user account
     ip_address = get_client_ip(request)
 
     # Prevent self-deletion
@@ -4066,20 +3634,13 @@ async def delete_user(
     return {"message": f"User {username} deleted successfully"}
 
 
-# ============================================
-# ADMIN SYSTEM MANAGEMENT ENDPOINTS
-# ============================================
-
+# Admin Endpoints
 @app.get("/api/admin/database/stats")
 async def get_database_stats(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Get database statistics (ADMIN ONLY).
-
-    Returns table counts and database size information.
-    """
+    # Get database statistics (ADMIN ONLY).
     stats = {
         "users": db.query(User).count(),
         "downloads": db.query(Download).count(),
@@ -4109,11 +3670,7 @@ async def get_database_stats(
 async def backup_database(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Create database backup (ADMIN ONLY).
-
-    Creates a timestamped backup of the SQLite database in the backups/ directory.
-    """
+    # Create a timestamped database backup of the SQLite database in the backups/ directory.
     import shutil
     from datetime import datetime
 
@@ -4157,11 +3714,7 @@ async def backup_database(
 async def vacuum_database(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    VACUUM the database to reclaim space and optimize (ADMIN ONLY).
-
-    Rebuilds the database file, repacking it into minimal disk space.
-    """
+    # Rebuilds the database file, repacking it into minimal disk space.
     try:
         # Use a raw connection to run VACUUM (cannot be in a transaction)
         from database import engine
@@ -4192,11 +3745,7 @@ async def vacuum_database(
 async def optimize_database(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Optimize the database for better query performance (ADMIN ONLY).
-
-    Analyzes tables and updates statistics.
-    """
+    # Optimize the database for better query performance
     try:
         from database import engine
         with engine.connect() as connection:
@@ -4218,11 +3767,7 @@ async def optimize_database(
 async def check_database_integrity(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Check database integrity (ADMIN ONLY).
-
-    Verifies that the database structure is valid.
-    """
+    # Verifies that the database structure is valid.
     try:
         from database import engine
         with engine.connect() as connection:
@@ -4251,11 +3796,7 @@ async def check_database_integrity(
 async def list_backups(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    List available database backup files (ADMIN ONLY).
-
-    Includes both manual backups and pre-restore safety backups.
-    """
+    # List available database backup files. Includes both manual backups and pre-restore safety backups.
     import os
     import glob
     from datetime import datetime
@@ -4295,12 +3836,7 @@ async def restore_database(
     backup_filename: str,
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Restore database from a backup file (ADMIN ONLY).
-
-    WARNING: This will replace the current database with the backup.
-    All current data will be lost.
-    """
+    # Restore database from a backup file.
     import os
     import shutil
     from datetime import datetime
@@ -4353,13 +3889,10 @@ async def delete_backup(
     backup_filename: str,
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Delete a backup file (ADMIN ONLY).
-    Expects just the filename part (e.g., f"{DATABASE_FILE}.backup.20251216_220650")
-    """
+    # Delete a backup file, expects just the filename part ({DATABASE_FILE}.backup.{DATETIME}")
     import os
 
-    # Validate backup filename format (without directory prefix)
+    # Validate backup filename format
     if not backup_filename.startswith(f"{DATABASE_FILE}.backup.") and not backup_filename.startswith(f"{DATABASE_FILE}.pre-restore."):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -4397,10 +3930,7 @@ async def download_backup(
     backup_filename: str,
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Download a backup file (ADMIN ONLY).
-    Expects just the filename part (e.g., f"{DATABASE_FILE}.backup.20251216_220650")
-    """
+    # Download a backup file (ADMIN ONLY).
     import os
     from fastapi.responses import FileResponse
 
@@ -4445,11 +3975,7 @@ async def get_audit_logs(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Get audit logs with pagination (ADMIN ONLY).
-
-    Returns authentication and user management audit trail.
-    """
+    # Get audit logs with pagination.
     query = db.query(AuthAuditLog).order_by(AuthAuditLog.timestamp.desc())
 
     # Filter by event type if specified (supports comma-separated list)
@@ -4493,11 +4019,7 @@ async def get_failed_logins(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Get recent failed login attempts (ADMIN ONLY).
-
-    Returns failed login attempts for security monitoring.
-    """
+    # Get recent failed login attempts for security monitoring.
     failed_attempts = db.query(FailedLoginAttempt)\
         .order_by(FailedLoginAttempt.attempt_time.desc())\
         .limit(limit)\
@@ -4525,11 +4047,7 @@ async def get_active_sessions(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Get list of active user sessions (ADMIN ONLY).
-
-    Note: Since JWT is stateless, this shows recent successful logins within the last 24 hours.
-    """
+    # Get list of recent successful logins within the last 24 hours.
     from datetime import timedelta
 
     # Get successful logins in the last 24 hours
@@ -4568,12 +4086,8 @@ async def get_active_sessions(
 async def get_admin_settings_ui(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Get admin settings for web UI editing (ADMIN ONLY).
-
-    Returns only the settings that should be editable via the UI.
-    Excludes application architecture settings like public_endpoints.
-    """
+    # Get admin settings for web UI editing.
+    # Excludes application architecture settings like public_endpoints.
     admin_settings = get_admin_settings()
 
     return {
@@ -4611,17 +4125,11 @@ async def get_admin_settings_ui(
     }
 
 
-# ===== OIDC Admin Endpoints =====
-
 @app.get("/api/admin/oidc/config")
 async def get_oidc_admin_config(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Get full OIDC configuration for admin UI (ADMIN ONLY).
-
-    Returns complete OIDC configuration with client_secret redacted for security.
-    """
+    # Get full OIDC configuration for admin UI.
     external_auth = get_external_auth_config()
     return external_auth.get_admin_config(redact_secret=True)
 
@@ -4633,11 +4141,7 @@ async def update_oidc_config(
     db: Session = Depends(get_db_session),
     request: Request = None
 ):
-    """
-    Update OIDC configuration (ADMIN ONLY).
-
-    Validates and saves the new OIDC configuration to external_auth.json.
-    """
+    # Update OIDC configuration.
     try:
         print("=== OIDC Config Update Endpoint Called ===")
         print(f"Received config update: {config_update}")
@@ -4691,7 +4195,7 @@ async def update_oidc_config(
 
 
 class LinkOIDCAccountRequest(BaseModel):
-    """Request model for linking OIDC account to existing user"""
+    # Request model for linking OIDC account to existing user
     user_id: str
     oidc_provider: str
     oidc_subject: str
@@ -4705,12 +4209,8 @@ async def link_oidc_account(
     db: Session = Depends(get_db_session),
     request: Request = None
 ):
-    """
-    Manually link OIDC account to existing user (ADMIN ONLY).
-
-    This endpoint allows admins to resolve username conflicts by manually
-    linking an OIDC account to an existing local user account.
-    """
+    # Manually link OIDC account to existing user.
+    # Allows admins to resolve username conflicts by manually linking an OIDC account to an existing local user account.
     try:
         # Find user by user_id
         user = db.query(User).filter(User.id == link_data.user_id).first()
@@ -4776,12 +4276,6 @@ async def unlink_oidc_account(
     db: Session = Depends(get_db_session),
     request: Request = None
 ):
-    """
-    Unlink OIDC account from user (ADMIN ONLY).
-
-    Removes OIDC linkage from user account. User will need to set
-    a local password to login again.
-    """
     try:
         # Find user
         user = db.query(User).filter(User.id == user_id).first()
@@ -4836,11 +4330,6 @@ async def get_oidc_linked_users(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Get list of users with OIDC accounts linked (ADMIN ONLY).
-
-    Returns all users that have OIDC authentication configured.
-    """
     try:
         oidc_users = db.query(User).filter(User.oidc_subject.isnot(None)).all()
 
@@ -4874,12 +4363,7 @@ async def update_admin_settings_ui(
     settings_update: Dict[str, Any],
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Update admin settings from web UI (ADMIN ONLY).
-
-    Validates input and writes to admin_settings.json.
-    Changes require application restart to take effect.
-    """
+    # Update admin settings from web UI
     import json
     from pathlib import Path
 
@@ -4911,8 +4395,7 @@ async def update_admin_settings_ui(
         if "rate_limiting" in settings_update:
             current_settings["rate_limiting"].update(settings_update["rate_limiting"])
 
-        # Validate updated settings
-        # Basic type validation
+        # Validate updated settings, basic type validation
         if "proxy" in settings_update:
             if "is_behind_proxy" in settings_update["proxy"]:
                 if not isinstance(settings_update["proxy"]["is_behind_proxy"], bool):
@@ -4959,15 +4442,10 @@ async def update_admin_settings_ui(
 @app.get("/")
 async def root(request: Request):
     """
-    Serve the main HTML page or redirect to login.
-
-    Priority order:
+    Serve the main HTML page or redirect to login, handles login and first-time setup.
     1. If auth disabled -> serve main page
     2. If valid token -> serve main page
     3. Otherwise -> redirect to login
-
-    Note: First-time setup is now handled by the login page itself,
-    which checks the setup flag and shows the appropriate form.
     """
     from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -4978,12 +4456,6 @@ async def root(request: Request):
         with open("assets/index.html") as f:
             return HTMLResponse(content=f.read())
 
-    # Auth is enabled - serve main page and let frontend JavaScript handle auth check
-    # The frontend will call /api/auth/me to verify the token and redirect to login if needed
-    # This approach works because:
-    # 1. Backend cannot access localStorage where token is stored
-    # 2. Frontend checkAuth() will validate token and redirect if invalid
-    # 3. All API endpoints are protected, so even if someone bypasses frontend, they can't access data
     with open("assets/index.html") as f:
         return HTMLResponse(content=f.read())
 
@@ -5001,7 +4473,6 @@ async def start_download(request: DownloadRequest, http_request: Request, curren
     # Get client IP (from proxy headers middleware)
     client_ip = getattr(http_request.state, 'client_ip', 'unknown')
 
-    # Note: Rate limiting is now handled by global middleware
 
     # Validate URL
     is_valid, error_msg = validate_url(request.url)
@@ -5072,18 +4543,14 @@ async def start_download(request: DownloadRequest, http_request: Request, curren
                     continue
 
             if created_downloads:
-                await emit_log("INFO", "Playlist", f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                await emit_log("INFO", "Playlist", f"✓ PLAYLIST PROCESSING COMPLETE")
                 await emit_log("INFO", "Playlist", f"  Total videos extracted: {len(playlist_urls)}")
                 await emit_log("INFO", "Playlist", f"  Successfully created: {len(created_downloads)}")
                 await emit_log("INFO", "Playlist", f"  Failed: {len(playlist_urls) - len(created_downloads)}")
-                await emit_log("INFO", "Playlist", f"  All downloads are now in the queue")
-                await emit_log("INFO", "Playlist", f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
                 # Return the first download created
                 return enrich_download_with_user(db, created_downloads[0])
             else:
-                await emit_log("ERROR", "Playlist", "✗ Failed to create any downloads from playlist")
+                await emit_log("ERROR", "Playlist", "Failed to create any downloads from playlist")
                 raise HTTPException(status_code=500, detail="Failed to create downloads from playlist")
         else:
             # If extraction failed or playlist is empty, fall back to single video download
@@ -5117,11 +4584,7 @@ async def upload_video(
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Upload a video file to use with tools.
-    Creates a Download record with status COMPLETED to integrate with existing tools.
-    """
-    # Get client IP
+    # Upload a video file to use with tools and get client IP
     client_ip = getattr(http_request.state, 'client_ip', 'unknown') if http_request else 'unknown'
 
     # Validate filename doesn't contain path traversal or dangerous characters
@@ -5161,12 +4624,12 @@ async def upload_video(
         )
 
     try:
-        # Generate UUID for internal filename (safe from injection)
+        # Generate UUID for internal filename
         file_uuid = str(uuid.uuid4())
         internal_filename = f"{file_uuid}{file_ext}"
         file_path = os.path.join("downloads", internal_filename)
 
-        # Use original filename for display (already validated for path traversal above)
+        # Use original filename for display
         display_filename = file.filename
 
         await emit_log("INFO", "Upload", f"Starting upload from {client_ip}: {display_filename}")
@@ -5210,8 +4673,7 @@ async def upload_video(
             internal_thumbnail = None
             await emit_log("WARNING", "Upload", f"Thumbnail extraction failed: {str(e)}", None)
 
-        # Create Download record with status COMPLETED
-        # This allows the uploaded file to appear in tools and file lists
+        # Create Download record with completed status, this allows the uploaded file to appear in tools and file lists
         user_id = current_user.get("sub")
         download = Download(
             url=f"uploaded://{display_filename}",  # Special URL to indicate upload
@@ -5256,14 +4718,7 @@ async def upload_video(
 
 @app.get("/api/downloads", response_model=DownloadsListResponse)
 async def get_downloads(status: Optional[str] = None, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    Get downloads visible to the current user.
-
-    Regular users see: public downloads + their own private downloads
-    Admin users see: ALL downloads
-
-    Returns: Downloads list plus count of hidden private active downloads
-    """
+    # Get downloads visible to the current user.
     user_id = current_user.get("sub")
     is_admin = current_user.get("is_admin", False)
 
@@ -5293,7 +4748,6 @@ async def get_downloads(status: Optional[str] = None, current_user: Dict[str, An
             downloads = DatabaseService.get_visible_downloads(db, user_id)
 
         # Count hidden private active downloads from other users
-        # Active statuses: queued, downloading, processing
         all_active = db.query(Download).filter(
             Download.status.in_([DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING])
         ).all()
@@ -5313,7 +4767,7 @@ async def get_downloads(status: Optional[str] = None, current_user: Dict[str, An
 
 @app.get("/api/downloads/{download_id}", response_model=DownloadResponse)
 async def get_download(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """Get a specific download by ID"""
+    # Get a specific download by ID
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
@@ -5326,10 +4780,7 @@ async def toggle_download_visibility(
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: Session = Depends(get_db_session)
 ):
-    """
-    Toggle download visibility between public and private.
-    Only the owner or admin can toggle visibility.
-    """
+    # Toggle download visibility between public and private, only the owner or admin can toggle visibility.
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
@@ -5337,7 +4788,6 @@ async def toggle_download_visibility(
     user_id = current_user.get("sub")
     is_admin = current_user.get("is_admin", False)
 
-    # Only owner or admin can toggle visibility
     if not is_admin and download.user_id != user_id:
         raise HTTPException(
             status_code=403,
@@ -5361,7 +4811,7 @@ async def toggle_download_visibility(
 
 @app.delete("/api/downloads/{download_id}")
 async def delete_download(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """Delete a download and its associated file"""
+    # Delete a download and its associated file
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         await emit_log("WARNING", "API", f"Attempted to delete non-existent download: {download_id}")
@@ -5371,7 +4821,7 @@ async def delete_download(download_id: str, current_user: Dict[str, Any] = Depen
 
     display_name = download.filename or "unknown"
 
-    # Delete video file if it exists (using internal_filename)
+    # Delete video file if it exists
     if download.internal_filename:
         filepath = os.path.join("downloads", download.internal_filename)
         if os.path.exists(filepath):
@@ -5381,7 +4831,7 @@ async def delete_download(download_id: str, current_user: Dict[str, Any] = Depen
             except Exception as e:
                 await emit_log("ERROR", "API", f"Failed to delete file {display_name}: {str(e)}", download_id)
 
-    # Delete thumbnail if it exists (using internal_thumbnail)
+    # Delete thumbnail if it exists
     if download.internal_thumbnail:
         thumb_path = os.path.join("downloads", download.internal_thumbnail)
         if os.path.exists(thumb_path):
@@ -5398,8 +4848,7 @@ async def delete_download(download_id: str, current_user: Dict[str, Any] = Depen
 
 @app.post("/api/downloads/cleanup", response_model=CleanupStats)
 async def cleanup_downloads(days: int = 7, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """Clean up failed downloads older than specified days and remove orphaned files"""
-
+    # Clean up failed downloads older than specified days and remove orphaned files
     await emit_log("INFO", "Cleanup", f"Starting cleanup of downloads older than {days} days")
 
     # Delete old failed downloads
@@ -5458,7 +4907,7 @@ async def cleanup_downloads(days: int = 7, current_user: Dict[str, Any] = Depend
 
 @app.websocket("/ws/{download_id}")
 async def websocket_endpoint(websocket: WebSocket, download_id: str):
-    """WebSocket endpoint for real-time download progress"""
+    # WebSocket endpoint for real-time download progress
     await websocket.accept()
 
     # Add to active connections
@@ -5477,8 +4926,7 @@ async def websocket_endpoint(websocket: WebSocket, download_id: str):
                     "progress": download.progress
                 })
 
-        # Keep connection alive with timeout
-        # Disconnect if client stops responding for 5 minutes
+        # Keep connection alive with timeout, disconnect if client stops responding for 5 minutes
         while True:
             try:
                 await asyncio.wait_for(websocket.receive_text(), timeout=WEBSOCKET_IDLE_TIMEOUT)
@@ -5516,21 +4964,7 @@ async def get_logs(
     since_sequence: Optional[int] = None,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """
-    Get logs with optional filtering and incremental updates.
-
-    Args:
-        log_type: Type of logs to retrieve ("user", "admin", "both")
-                  Regular users can only access "user" logs
-                  Admins can access "user", "admin", or "both"
-        level: Filter by log level (INFO, WARNING, ERROR, etc.)
-        component: Filter by component name
-        download_id: Filter by download ID
-        since_sequence: Only return logs after this sequence number
-
-    Returns:
-        Logs with metadata including sequence numbers and buffer sizes
-    """
+    # Get logs with optional filtering and incremental updates.
     is_admin = current_user.get("is_admin", False)
 
     # Access control: non-admins can only see user logs
@@ -5586,7 +5020,7 @@ async def get_logs(
 
 @app.websocket("/ws/logs")
 async def logs_websocket(websocket: WebSocket):
-    """WebSocket endpoint for real-time log streaming"""
+    # WebSocket endpoint for real-time log streaming
     logger.info(f"[DEBUG] WebSocket connection attempt from {websocket.client}")
     
     # Enforce maximum WebSocket connections to prevent memory exhaustion
@@ -5656,7 +5090,7 @@ async def logs_websocket(websocket: WebSocket):
 
 @app.get("/api/settings/version", response_model=VersionInfo)
 async def get_version(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Get yt-dlp, Python, and app version"""
+    # Get yt-dlp, Python, and app version
     try:
         result = subprocess.run(
             [sys.executable, "-m", "yt_dlp", "--version"],
@@ -5685,7 +5119,7 @@ async def get_version(current_user: Dict[str, Any] = Depends(get_current_user)):
 
 @app.get("/api/settings/disk-space", response_model=DiskSpaceInfo)
 async def get_disk_space():
-    """Get disk space information for downloads directory only"""
+    # Get disk space information for downloads directory only
     downloads_path = Path("downloads")
     
     # Calculate total space used by files in downloads folder
@@ -5710,7 +5144,7 @@ async def get_disk_space():
 
 @app.get("/api/cookies")
 async def get_cookies(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Get list of available cookie files"""
+    # Get list of available cookie files
     try:
         if not os.path.exists("cookies"):
             return []
@@ -5726,14 +5160,13 @@ async def get_cookies(current_user: Dict[str, Any] = Depends(get_current_user)):
 
 @app.get("/api/settings/queue")
 async def get_queue_settings(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Get queue and download settings"""
+    # Get queue and download settings
     return settings.get_all()
 
 
 @app.post("/api/settings/queue")
 async def update_queue_settings(updates: dict, current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Update queue and download settings"""
-    # Security: Validate settings
+    # Update queue and download settings
     is_valid, error_msg = validate_settings_update(updates)
     if not is_valid:
         await emit_log("WARNING", "System", f"Invalid settings update rejected: {error_msg}")
@@ -5746,13 +5179,7 @@ async def update_queue_settings(updates: dict, current_user: Dict[str, Any] = De
 
 @app.post("/api/settings/update-ytdlp")
 async def update_ytdlp(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
-    """
-    Update yt-dlp to the latest version (ADMIN ONLY)
-
-    WARNING: This endpoint is disabled by default for security reasons.
-    To enable, set allow_ytdlp_update to true in admin_settings.json.
-    """
-    # Security: Disable dangerous system package updates by default
+    # Update yt-dlp to the latest version
     admin_settings = get_admin_settings()
     allow_update = admin_settings.security.allow_ytdlp_update
 
@@ -5772,7 +5199,7 @@ async def update_ytdlp(current_admin: Dict[str, Any] = Depends(get_current_admin
             [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
             capture_output=True,
             text=True,
-            timeout=60  # Security: Add timeout
+            timeout=60  # Add timeout to keep job from going stale
         )
 
         if result.returncode == 0:
@@ -5792,16 +5219,8 @@ async def update_ytdlp(current_admin: Dict[str, Any] = Depends(get_current_admin
 
 @app.post("/api/settings/clear-ytdlp-cache")
 async def clear_ytdlp_cache(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
-    """
-    Clear yt-dlp cache to resolve signature solving and format extraction issues (ADMIN ONLY).
-    
-    Useful when:
-    - YouTube changes their signature algorithm
-    - Format extraction fails with signature solving errors
-    - Getting "Some formats may be missing" warnings
-    
-    This removes cached extractor data and forces yt-dlp to refresh on next use.
-    """
+    # Clear yt-dlp cache to resolve signature solving and format extraction issues.
+    # This removes cached extractor data and forces yt-dlp to refresh on next use.
     try:
         await emit_log("INFO", "System", "Starting yt-dlp cache cleanup")
         
@@ -5847,10 +5266,7 @@ async def clear_ytdlp_cache(current_admin: Dict[str, Any] = Depends(get_current_
 
 @app.get("/api/settings/cookies")
 async def list_cookie_files(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    List all available cookie files in the cookies/ directory.
-    Returns filename, size, and last modified time for each file.
-    """
+    # List all available cookie files in the cookies/ directory.
     try:
         cookies_dir = "cookies"
         if not os.path.exists(cookies_dir):
@@ -5888,10 +5304,7 @@ async def upload_cookie_file(
     http_request: Request = None,
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Upload a cookie file for authenticated downloads (ADMIN ONLY).
-    Validates file size (max 100KB) and file type (.txt only).
-    """
+    # Upload a cookie file for authenticated downloads, validates file size  and file type.
     # Get client IP for logging
     client_ip = getattr(http_request.state, 'client_ip', 'unknown') if http_request else 'unknown'
 
@@ -5911,6 +5324,7 @@ async def upload_cookie_file(
         raise HTTPException(status_code=400, detail="Invalid cookie filename. Only alphanumeric characters, hyphens, underscores, and dots allowed.")
 
     # Validate file size (max 5KB)
+    # A valid cookie file will be incredibly small, 5KB should be plenty.
     MAX_SIZE = 5 * 1024  # 5KB in bytes
 
     try:
@@ -5954,10 +5368,7 @@ async def upload_cookie_file(
 
 @app.delete("/api/settings/cookies/{filename}")
 async def delete_cookie_file(filename: str, http_request: Request = None, current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
-    """
-    Delete a cookie file from the cookies/ directory (ADMIN ONLY).
-    Validates filename to prevent path traversal attacks.
-    """
+    # Delete a cookie file from the cookies/ directory.
     # Get client IP for logging
     client_ip = getattr(http_request.state, 'client_ip', 'unknown') if http_request else 'unknown'
 
@@ -5996,8 +5407,7 @@ async def delete_cookie_file(filename: str, http_request: Request = None, curren
 
 @app.get("/api/files/thumbnail/{download_id}")
 async def get_thumbnail(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
-    """Serve thumbnail images using download ID"""
-    # Look up the download record to get internal_thumbnail filename
+    # Serve thumbnail images using download ID, look up the download record to get internal_thumbnail filename
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
@@ -6048,8 +5458,7 @@ async def get_thumbnail(download_id: str, current_user: Dict[str, Any] = Depends
 
 @app.get("/api/files/video/{download_id}")
 async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
-    """Serve video files for streaming/playing in browser using download ID"""
-    # Look up the download record to get internal_filename
+    # Serve video files for streaming/playing in browser using download ID, look up the download record to get internal_filename
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
@@ -6100,8 +5509,7 @@ async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get
 
 @app.get("/api/files/download/{download_id}")
 async def download_file(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
-    """Download video file using download ID"""
-    # Look up the download record to get internal_filename and display filename
+    # Download video file using download ID, look up the download record to get internal_filename and display filename
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
@@ -6128,12 +5536,7 @@ async def download_file(download_id: str, current_user: Dict[str, Any] = Depends
 
 @app.post("/api/share/{download_id}")
 async def create_share_link(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    Create a shareable link for a public video.
-    Only public videos can be shared.
-    Returns the share token that can be used in /share/{token} URL.
-    """
-    # Get the download
+    # Create a shareable link for a public video, only public videos can be shared.d
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
         raise HTTPException(status_code=404, detail="Download not found")
@@ -6178,9 +5581,7 @@ async def create_share_link(download_id: str, current_user: Dict[str, Any] = Dep
 
 
 def generate_share_error_page(title: str, message: str, emoji: str = "❌") -> str:
-    """
-    Generate a consistent error page for share links that matches the share page styling.
-    """
+    # Generate a consistent error page for share links that matches the share page styling.
     return f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -6280,10 +5681,7 @@ def generate_share_error_page(title: str, message: str, emoji: str = "❌") -> s
 
 @app.get("/share/{token}")
 async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
-    """
-    Public endpoint to view a shared video.
-    No authentication required - anyone with the link can view.
-    """
+    # Public endpoint to view a shared video, anyone with the link can view.
     from fastapi.responses import HTMLResponse
 
     # Look up the share token
@@ -6337,8 +5735,7 @@ async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
     share.last_viewed_at = datetime.now(timezone.utc)
     db.commit()
 
-    # Return HTML page with embedded video player
-    # Get video and thumbnail URLs (using share-specific endpoints)
+    # Return HTML page with embedded video player, get video and thumbnail URLs
     thumbnail_url = f"/share/{token}/thumbnail" if download.thumbnail else None
 
     html_content = f"""
@@ -6447,11 +5844,7 @@ async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
 
 @app.get("/share/{token}/video")
 async def get_shared_video(token: str, db: Session = Depends(get_db_session)):
-    """
-    Serve video file for a shared link.
-    No authentication required - accessible via share token.
-    """
-    # Look up the share token
+    # Serve video file for a shared link, look up the share token
     share = db.query(ShareToken).filter(ShareToken.token == token).first()
     if not share:
         raise HTTPException(status_code=404, detail="Share link not found")
@@ -6507,11 +5900,7 @@ async def get_shared_video(token: str, db: Session = Depends(get_db_session)):
 
 @app.get("/share/{token}/thumbnail")
 async def get_shared_thumbnail(token: str, db: Session = Depends(get_db_session)):
-    """
-    Serve thumbnail for a shared link.
-    No authentication required - accessible via share token.
-    """
-    # Look up the share token
+    # Serve thumbnail for a shared link, look up the share token
     share = db.query(ShareToken).filter(ShareToken.token == token).first()
     if not share:
         raise HTTPException(status_code=404, detail="Share link not found")
@@ -6563,24 +5952,17 @@ async def get_shared_thumbnail(token: str, db: Session = Depends(get_db_session)
 
 @app.get("/api/files", response_model=List[FileInfo])
 async def list_files(current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    List completed downloads visible to the current user.
-
-    Regular users see: public files + their own private files
-    Admin users see: ALL files
-    """
+    # List completed downloads visible to the current user.
     try:
         user_id = current_user.get("sub")
         is_admin = current_user.get("is_admin", False)
 
         # Get completed downloads based on user permissions
-        # Use same SQL-based filtering as /api/downloads for consistency
         if is_admin:
             # Admins see everything
             completed_downloads = DatabaseService.get_downloads_by_status(db, DownloadStatus.COMPLETED)
         else:
             # Regular users see: public + own private
-            # Use SQL filtering to ensure proper visibility control
             completed_downloads = DatabaseService.get_visible_downloads_by_status(
                 db, user_id, DownloadStatus.COMPLETED
             )
@@ -6616,7 +5998,7 @@ async def list_files(current_user: Dict[str, Any] = Depends(get_current_user), d
 
 @app.delete("/api/files/{download_id}")
 async def delete_file(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """Delete a specific file from downloads directory and remove database entry using download ID"""
+    # Delete a specific file from downloads directory and remove database entry using download ID
     try:
         # Look up the download record
         download = DatabaseService.get_download_by_id(db, download_id)
@@ -6662,7 +6044,7 @@ async def delete_file(download_id: str, current_user: Dict[str, Any] = Depends(g
 
 @app.post("/api/files/calculate-zip-size")
 async def calculate_zip_size(request: DownloadZipRequest, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """Calculate total size of selected files and estimate ZIP size using download IDs"""
+    # Calculate total size of selected files and estimate ZIP size using download IDs
     try:
         if not request.download_ids:
             raise HTTPException(status_code=400, detail="No files specified")
@@ -6699,7 +6081,7 @@ async def calculate_zip_size(request: DownloadZipRequest, current_user: Dict[str
 
 @app.post("/api/files/download-zip")
 async def download_files_as_zip(request: DownloadZipRequest, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
-    """Create and stream a ZIP file containing selected files using download IDs"""
+    # Create and stream a ZIP file containing selected files using download IDs
     try:
         if not request.download_ids:
             raise HTTPException(status_code=400, detail="No files specified")
@@ -6776,16 +6158,9 @@ async def download_files_as_zip(request: DownloadZipRequest, current_user: Dict[
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ========================================
-# Tool Conversion API Endpoints
-# ========================================
-
 @app.post("/api/tools/video-to-mp3", response_model=ToolConversionResponse)
 async def convert_video_to_mp3(request: VideoToMp3Request, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    Start a video to MP3 conversion.
-    Checks for existing conversion to prevent duplicates.
-    """
+    # Start a video to MP3 conversion, checks for existing conversion to prevent duplicates.
     try:
         # Validate audio quality
         valid_qualities = [96, 128, 192, 256, 320]
@@ -6869,9 +6244,7 @@ async def convert_video_to_mp3(request: VideoToMp3Request, current_user: Dict[st
 
 @app.get("/api/tools/conversions", response_model=List[ToolConversionResponse])
 async def list_conversions(status: Optional[str] = None, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    List all tool conversions, optionally filtered by status.
-    """
+    # List all tool conversions, optionally filtered by status.
     try:
         query = db.query(ToolConversion)
 
@@ -6894,9 +6267,7 @@ async def list_conversions(status: Optional[str] = None, current_user: Dict[str,
 
 @app.get("/api/tools/conversions/{conversion_id}", response_model=ToolConversionResponse)
 async def get_conversion(conversion_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    Get specific conversion status by ID.
-    """
+    # Get specific conversion status by ID.
     try:
         conversion = db.query(ToolConversion).filter(ToolConversion.id == conversion_id).first()
         if not conversion:
@@ -6913,9 +6284,7 @@ async def get_conversion(conversion_id: str, current_user: Dict[str, Any] = Depe
 
 @app.delete("/api/tools/conversions/{conversion_id}")
 async def delete_conversion(conversion_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    Delete a conversion and its output file.
-    """
+    # Delete a conversion and its output file.
     try:
         conversion = db.query(ToolConversion).filter(ToolConversion.id == conversion_id).first()
         if not conversion:
@@ -6954,10 +6323,7 @@ async def delete_conversion(conversion_id: str, current_user: Dict[str, Any] = D
 
 @app.post("/api/tools/conversions/{conversion_id}/cancel")
 async def cancel_conversion(conversion_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    Cancel an active conversion job.
-    Kills the FFmpeg process, cleans up partial files, and marks as failed.
-    """
+    # Cancel an active conversion job, kills the FFmpeg process, cleans up partial files, and marks as failed.
     try:
         conversion = db.query(ToolConversion).filter(ToolConversion.id == conversion_id).first()
         if not conversion:
@@ -7029,9 +6395,7 @@ async def cancel_conversion(conversion_id: str, current_user: Dict[str, Any] = D
 
 @app.get("/api/tools/audio/{conversion_id}")
 async def download_audio(conversion_id: str, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    Stream/download the MP3 audio file for a completed conversion.
-    """
+    # Stream/download the MP3 audio file for a completed conversion.
     try:
         conversion = db.query(ToolConversion).filter(ToolConversion.id == conversion_id).first()
         if not conversion:
@@ -7068,10 +6432,7 @@ async def download_audio(conversion_id: str, current_user: Dict[str, Any] = Depe
 
 @app.post("/api/tools/conversions/cleanup", response_model=ConversionCleanupStats)
 async def cleanup_stale_conversions(hours: int = 1, current_user: Dict[str, Any] = Depends(get_current_user), db: Session = Depends(get_db_session)):
-    """
-    Clean up stale conversions that have been stuck in queued or converting state
-    for longer than the specified number of hours.
-    """
+    # Clean up stale conversions that have been stuck in queued or converting state for longer than the specified number of hours.
     try:
         await emit_log("INFO", "Cleanup", f"Starting cleanup of stale conversions older than {hours} hour(s)")
 
@@ -7137,12 +6498,7 @@ async def cleanup_stale_conversions(hours: int = 1, current_user: Dict[str, Any]
 
 @app.post("/api/tools/transform")
 async def transform_video(request: VideoTransformRequest, current_user: Dict[str, Any] = Depends(get_current_user)):
-    """
-    Queue a video transformation (flip or rotate).
-    Creates a ToolConversion record and adds to processing queue.
-    The transformation modifies the original video file in-place.
-    Returns immediately with the conversion record - actual processing happens in background.
-    """
+    # Queue a video transformation, creates a conversion record and adds to processing queue.
     try:
         conversion = await VideoTransformService.transform_video(
             request.download_id,
@@ -7158,7 +6514,7 @@ async def transform_video(request: VideoTransformRequest, current_user: Dict[str
 
 
 def update_compression_stats(ratio: float):
-    """Update compression ratio statistics with new sample"""
+    # Update compression ratio statistics with new sample
     try:
         samples = settings.get("zip_compression_samples", [])
 
@@ -7182,7 +6538,7 @@ def update_compression_stats(ratio: float):
 
 # Hardware Information Detection
 def get_cpu_info():
-    """Get CPU information"""
+    # Get CPU information
     try:
         cpu_info = {
             "model": platform.processor() or "Unknown",
@@ -7209,7 +6565,7 @@ def get_cpu_info():
 
 
 def get_memory_info():
-    """Get memory information in MB"""
+    # Get memory information in MB
     try:
         # Try Linux /proc/meminfo first
         if os.path.exists("/proc/meminfo"):
@@ -7245,7 +6601,7 @@ def get_memory_info():
 
 
 def get_disk_info():
-    """Get disk information for downloads directory"""
+    # Get disk information for downloads directory
     try:
         disk_usage = shutil.disk_usage("downloads")
         total_gb = disk_usage.total / (1024 ** 3)
@@ -7264,7 +6620,7 @@ def get_disk_info():
 
 
 def get_network_info():
-    """Get network interface information"""
+    # Get network interface information
     try:
         interfaces = []
 
@@ -7310,10 +6666,8 @@ def get_network_info():
 
 
 async def detect_hardware_acceleration():
-    """
-    Detect available hardware acceleration for FFmpeg.
-    Checks for NVIDIA NVENC, AMD AMF, Intel Quick Sync (QSV), and VAAPI.
-    """
+    # Detect available hardware acceleration for FFmpeg.
+    # Checks for NVIDIA NVENC, AMD AMF, Intel Quick Sync (QSV), and VAAPI.
     acceleration = {
         "nvenc": False,      # NVIDIA GPU encoding
         "amf": False,        # AMD GPU encoding
@@ -7371,11 +6725,7 @@ async def detect_hardware_acceleration():
 
 
 async def collect_hardware_info():
-    """
-    Collect all hardware information for caching.
-    This is called at startup and when the user clicks refresh.
-    Returns a complete hardware info dict that clients cache in localStorage.
-    """
+    # Collect all hardware information for caching.
     try:
         cpu_info = get_cpu_info()
         memory_info = get_memory_info()
@@ -7408,12 +6758,7 @@ async def collect_hardware_info():
 
 @app.get("/api/hardware/info")
 async def get_hardware_info(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
-    """
-    Get server hardware information (returns cached data).
-    Cache is populated at startup and refreshed via POST /api/hardware/refresh.
-    Clients should cache this in localStorage and only fetch once per session.
-    (ADMIN ONLY)
-    """
+    # Get server hardware information (returns cached data).
     global hardware_info_cache
 
     # If cache is empty (shouldn't happen after startup), populate it
@@ -7425,11 +6770,7 @@ async def get_hardware_info(current_admin: Dict[str, Any] = Depends(get_current_
 
 @app.post("/api/hardware/refresh")
 async def refresh_hardware_info(current_admin: Dict[str, Any] = Depends(get_current_admin_user)):
-    """
-    Refresh hardware information cache (ADMIN ONLY).
-    Called when user clicks the "Refresh Hardware Info" button.
-    Re-detects all hardware and updates the server cache.
-    """
+    # Refresh hardware information cache, called when user clicks the "Refresh Hardware Info" button.
     global hardware_info_cache, hardware_acceleration
 
     try:
@@ -7451,10 +6792,7 @@ async def refresh_hardware_info(current_admin: Dict[str, Any] = Depends(get_curr
 
 @app.get("/api/health")
 async def health_check():
-    """
-    Simple health check endpoint.
-    Used to verify server is running and responsive.
-    """
+    # Simple health check endpoint., used to verify server is running and responsive.
     return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
@@ -7462,11 +6800,7 @@ async def health_check():
 async def get_power_status(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Get current system power status (ADMIN ONLY).
-
-    Returns information about active operations and server uptime.
-    """
+    # Get current system power status, returns information about active operations and server uptime.
     global server_start_time, graceful_shutdown_requested
 
     # Calculate uptime
@@ -7497,16 +6831,7 @@ async def get_power_status(
 async def restart_server_graceful(
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Initiate a graceful server restart (ADMIN ONLY).
-
-    Waits for all active operations to complete before restarting.
-    - Stops accepting new downloads/conversions
-    - Monitors active operations
-    - Triggers restart when all operations are complete
-
-    Security: Requires admin authentication. Logged to audit trail.
-    """
+    # Initiate a graceful server restart, waits for all active operations to complete before restarting.
     import signal
     global graceful_shutdown_requested
 
@@ -7583,16 +6908,9 @@ async def restart_server_graceful(
 
 @app.post("/api/admin/system/restart-force")
 async def restart_server_force(
+    # Force restart the server application immediately (ADMIN ONLY).
     current_admin: Dict[str, Any] = Depends(get_current_admin_user)
 ):
-    """
-    Force restart the server application immediately (ADMIN ONLY).
-
-    Initiates immediate shutdown without waiting for operations to complete.
-    Active operations will be resumed from database after restart.
-
-    Security: Requires admin authentication. Logged to audit trail.
-    """
     import signal
 
     # Log the restart action with FORCE indicator
@@ -7631,6 +6949,7 @@ async def restart_server_force(
     }
 
 
+# Main app launch 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
