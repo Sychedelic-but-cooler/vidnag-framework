@@ -8,7 +8,7 @@ Github Repository: https://github.com/Sychedelic-but-cooler/vidnag-framework
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Request, UploadFile, File, Form, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse, StreamingResponse, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # Data validation and database
@@ -1042,6 +1042,85 @@ def sanitize_filename(filename: str) -> str:
         base = 'video'
 
     return base + ext
+
+
+async def create_video_streaming_response(request: Request, filepath: str, media_type: str, headers: Optional[Dict[str, str]] = None) -> StreamingResponse:
+    """
+    Create a chunked video streaming response that supports HTTP Range requests.
+    This allows videos to start playing immediately and supports seeking.
+    """
+    if headers is None:
+        headers = {}
+    
+    # Get file size
+    file_size = os.path.getsize(filepath)
+    
+    # Always add Accept-Ranges header
+    headers['Accept-Ranges'] = 'bytes'
+    
+    # Parse Range header if present
+    range_header = request.headers.get('Range')
+    
+    if range_header:
+        # Parse Range header (e.g., "bytes=0-1023" or "bytes=1024-")
+        try:
+            ranges = range_header.replace('bytes=', '')
+            range_parts = ranges.split('-')
+            start = int(range_parts[0]) if range_parts[0] else 0
+            end = int(range_parts[1]) if range_parts[1] else file_size - 1
+            
+            # Ensure valid range
+            start = max(0, min(start, file_size - 1))
+            end = max(start, min(end, file_size - 1))
+            
+            content_length = end - start + 1
+            
+            # Set partial content headers
+            headers['Content-Range'] = f'bytes {start}-{end}/{file_size}'
+            headers['Content-Length'] = str(content_length)
+            
+            async def stream_chunk():
+                with open(filepath, 'rb') as file:
+                    file.seek(start)
+                    remaining = content_length
+                    chunk_size = 8192  # 8KB chunks
+                    
+                    while remaining > 0:
+                        chunk_to_read = min(chunk_size, remaining)
+                        chunk = file.read(chunk_to_read)
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                        yield chunk
+            
+            return StreamingResponse(
+                stream_chunk(),
+                status_code=206,  # Partial Content
+                headers=headers,
+                media_type=media_type
+            )
+        except (ValueError, IndexError):
+            # Invalid Range header, fall back to full file
+            pass
+    
+    # No Range header or invalid Range - serve full file
+    headers['Content-Length'] = str(file_size)
+    
+    async def stream_full_file():
+        with open(filepath, 'rb') as file:
+            chunk_size = 8192  # 8KB chunks
+            while True:
+                chunk = file.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+    
+    return StreamingResponse(
+        stream_full_file(),
+        status_code=200,
+        headers=headers,
+        media_type=media_type
+    )
 
 
 async def embed_thumbnail_in_video(video_path: str, thumbnail_path: str, download_id: Optional[str] = None) -> bool:
@@ -5428,7 +5507,7 @@ async def get_thumbnail(download_id: str, current_user: Dict[str, Any] = Depends
 
 
 @app.get("/api/files/video/{download_id}")
-async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
+async def get_video(download_id: str, request: Request, current_user: Dict[str, Any] = Depends(get_current_user_optional), db: Session = Depends(get_db_session)):
     # Serve video files for streaming/playing in browser using download ID, look up the download record to get internal_filename
     download = DatabaseService.get_download_by_id(db, download_id)
     if not download:
@@ -5456,7 +5535,6 @@ async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get
         await emit_log("WARNING", "API", f"Disallowed file extension: {ext}")
         raise HTTPException(status_code=403, detail="File type not allowed")
 
-    from fastapi.responses import FileResponse
     media_types = {
         '.mp4': 'video/mp4',
         '.webm': 'video/webm',
@@ -5472,10 +5550,12 @@ async def get_video(download_id: str, current_user: Dict[str, Any] = Depends(get
 
     headers = {
         'Cache-Control': 'private, max-age=3600, must-revalidate',
-        'ETag': etag
+        'ETag': etag,
+        'Accept-Ranges': 'bytes',
+        'Content-Disposition': 'inline'
     }
 
-    return FileResponse(filepath, media_type=media_type, headers=headers)
+    return await create_video_streaming_response(request, filepath, media_type, headers)
 
 
 @app.get("/api/files/download/{download_id}")
@@ -5770,7 +5850,7 @@ async def view_shared_video(token: str, request: Request, db: Session = Depends(
 
 
 @app.get("/share/{token}/video")
-async def get_shared_video(token: str, db: Session = Depends(get_db_session)):
+async def get_shared_video(token: str, request: Request, db: Session = Depends(get_db_session)):
     # Serve video file for a shared link, look up the share token
     share = db.query(ShareToken).filter(ShareToken.token == token).first()
     if not share:
@@ -5803,7 +5883,6 @@ async def get_shared_video(token: str, db: Session = Depends(get_db_session)):
     if ext not in allowed_extensions:
         raise HTTPException(status_code=403, detail="File type not allowed")
 
-    from fastapi.responses import FileResponse
     media_types = {
         '.mp4': 'video/mp4',
         '.webm': 'video/webm',
@@ -5819,14 +5898,16 @@ async def get_shared_video(token: str, db: Session = Depends(get_db_session)):
 
     headers = {
         'Cache-Control': 'public, max-age=3600, must-revalidate',
-        'ETag': etag
+        'ETag': etag,
+        'Accept-Ranges': 'bytes',
+        'Content-Disposition': 'inline'
     }
 
-    return FileResponse(filepath, media_type=media_type, headers=headers)
+    return await create_video_streaming_response(request, filepath, media_type, headers)
 
 
 @app.get("/share/{token}/video.mp4")
-async def get_shared_video_mp4(token: str, db: Session = Depends(get_db_session)):
+async def get_shared_video_mp4(token: str, request: Request, db: Session = Depends(get_db_session)):
     # Serve video file with .mp4 extension for better Discord embed compatibility
     # This is essentially the same as get_shared_video but with a file-like URL
     share = db.query(ShareToken).filter(ShareToken.token == token).first()
@@ -5860,7 +5941,6 @@ async def get_shared_video_mp4(token: str, db: Session = Depends(get_db_session)
     if ext not in allowed_extensions:
         raise HTTPException(status_code=403, detail="File type not allowed")
 
-    from fastapi.responses import FileResponse
     media_types = {
         '.mp4': 'video/mp4',
         '.webm': 'video/webm',
@@ -5881,7 +5961,7 @@ async def get_shared_video_mp4(token: str, db: Session = Depends(get_db_session)
         'Accept-Ranges': 'bytes'  # Support range requests for video players
     }
 
-    return FileResponse(filepath, media_type=media_type, headers=headers)
+    return await create_video_streaming_response(request, filepath, media_type, headers)
 
 
 @app.get("/share/{token}/thumbnail")
