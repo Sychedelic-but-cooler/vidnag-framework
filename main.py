@@ -5645,7 +5645,7 @@ def generate_share_error_page(title: str, message: str, emoji: str = "❌") -> s
 
 
 @app.get("/share/{token}")
-async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
+async def view_shared_video(token: str, request: Request, db: Session = Depends(get_db_session)):
     # Public endpoint to view a shared video, anyone with the link can view.
     from fastapi.responses import HTMLResponse
 
@@ -5707,6 +5707,20 @@ async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
     filename = download.filename or 'Shared Video'
     view_count = str(share.view_count)
     created_at = share.created_at.strftime('%Y-%m-%d %H:%M UTC')
+    
+    # Generate absolute URLs for Open Graph meta tags
+    base_url = f"{request.url.scheme}://{request.url.netloc}"
+    share_url = f"{base_url}/share/{token}"
+    # Provide fallback thumbnail if none available
+    if thumbnail_url:
+        thumbnail_url_absolute = f"{base_url}{thumbnail_url}"
+    else:
+        # Use a default image or the site logo as fallback
+        thumbnail_url_absolute = f"{base_url}/assets/logo.png"
+    
+    # Format duration if available (simplified approach for now)
+    duration_formatted = "Unknown"
+    # Note: The actual duration extraction would need to be implemented based on the database schema
 
     # Load the static template and safely substitute placeholders
     try:
@@ -5722,6 +5736,9 @@ async def view_shared_video(token: str, db: Session = Depends(get_db_session)):
         .replace("__VIDEO_URL__", escape(video_url))
         .replace("__VIEW_COUNT__", escape(view_count))
         .replace("__CREATED_AT__", escape(created_at))
+        .replace("__SHARE_URL__", escape(share_url))
+        .replace("__THUMBNAIL_URL__", escape(thumbnail_url_absolute))
+        .replace("__DURATION__", escape(duration_formatted))
     )
 
     return HTMLResponse(content=rendered)
