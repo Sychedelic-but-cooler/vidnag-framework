@@ -5650,6 +5650,7 @@ async function loadAppConfigForm() {
             document.getElementById('max-concurrent-conversions').value = settings.max_concurrent_conversions || 1;
             document.getElementById('max-speed').value = settings.max_download_speed || 0;
             document.getElementById('min-disk-space').value = settings.min_disk_space_mb || 1000;
+            document.getElementById('download-timeout').value = settings.download_timeout_minutes || 60;
         }
     } catch (error) {
         console.error('Failed to load queue settings:', error);
@@ -6163,7 +6164,8 @@ async function saveAppConfigSettings(e) {
             max_concurrent_downloads: parseInt(document.getElementById('max-concurrent').value),
             max_concurrent_conversions: parseInt(document.getElementById('max-concurrent-conversions').value),
             max_download_speed: parseInt(document.getElementById('max-speed').value),
-            min_disk_space_mb: parseInt(document.getElementById('min-disk-space').value)
+            min_disk_space_mb: parseInt(document.getElementById('min-disk-space').value),
+            download_timeout_minutes: parseInt(document.getElementById('download-timeout').value)
         };
 
         const queueResponse = await apiFetch(`${API_BASE}/api/settings/queue`, {

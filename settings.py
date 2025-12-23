@@ -19,6 +19,7 @@ DEFAULT_SETTINGS = {
     "max_concurrent_conversions": 1,  # Default 1 for CPU-only systems
     "max_download_speed": 0,  # Measured in MiB/s (0 = unlimited)
     "min_disk_space_mb": 1000,  # Minimum free disk space before pausing downloads
+    "download_timeout_minutes": 60,  # Maximum time for a download to complete (in minutes)
     "zip_avg_compression_ratio": 0.95,  # Default 95%
     "zip_compression_samples": [],  # Recent compression ratios for size estimates
 }

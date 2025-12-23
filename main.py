@@ -656,19 +656,26 @@ def _cleanup_rate_limit_store():
 
 
 # Download timeout configuration (in seconds), prevent stale downloads from growing indefinitely
+# This is kept as a fallback value if the setting is not available
 DOWNLOAD_TIMEOUT_SECONDS = 3600  # 1 hour
 
 async def download_with_timeout(download_id: str, url: str, cookies_file: Optional[str] = None):
-    # Wrapper for Download Timeouts
+    # Wrapper for Download Timeouts - uses configurable timeout from settings
+    
+    # Get timeout from settings (in minutes) and convert to seconds
+    timeout_minutes = settings.get("download_timeout_minutes", 60)  # Default 60 minutes if not set
+    if timeout_minutes is None:
+        timeout_minutes = 60
+    timeout_seconds = int(timeout_minutes) * 60
+    
     try:
         await asyncio.wait_for(
             YtdlpService.download_video(download_id, url, cookies_file),
-            timeout=DOWNLOAD_TIMEOUT_SECONDS
+            timeout=timeout_seconds
         )
     except asyncio.TimeoutError:
         # Mark download as failed with timeout message
-        timeout_minutes = DOWNLOAD_TIMEOUT_SECONDS / 60
-        error_msg = f"Download exceeded timeout limit ({timeout_minutes:.0f} minutes) and was terminated"
+        error_msg = f"Download exceeded timeout limit ({timeout_minutes} minutes) and was terminated"
 
         await emit_log("ERROR", "Download", error_msg, download_id)
 
