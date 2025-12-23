@@ -124,7 +124,7 @@ def validate_cookie_filename(filename: str) -> bool:
 def validate_settings_update(updates: dict) -> tuple[bool, Optional[str]]:
     # Validate settings updates for security and correctness. Keeps users from setting invalid values
     # Defines allowed settings and their valid ranges/types.
-    allowed_keys = ['max_concurrent_downloads', 'max_concurrent_conversions', 'max_download_speed', 'min_disk_space_mb']
+    allowed_keys = ['max_concurrent_downloads', 'max_concurrent_conversions', 'max_download_speed', 'min_disk_space_mb', 'download_timeout_minutes']
 
     for key in updates.keys():
         if key not in allowed_keys:
@@ -153,6 +153,12 @@ def validate_settings_update(updates: dict) -> tuple[bool, Optional[str]]:
         value = updates["min_disk_space_mb"]
         if not isinstance(value, int) or value < 0 or value > 100000:
             return False, "min_disk_space_mb must be between 0 and 100000 MB"
+    # Validate download timeout
+    # Between 5 minutes and 8 hours (480 minutes) to prevent too short or too long timeouts
+    if "download_timeout_minutes" in updates:
+        value = updates["download_timeout_minutes"]
+        if not isinstance(value, int) or value < 5 or value > 480:
+            return False, "download_timeout_minutes must be between 5 and 480 minutes"
     return True, None
 
 
