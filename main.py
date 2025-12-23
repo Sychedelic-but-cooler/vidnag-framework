@@ -1332,8 +1332,14 @@ class UserInfoResponse(BaseModel):
     # Response body for current user info
     user_id: str
     username: str
+    display_name: Optional[str] = None
     is_admin: bool
     last_login: Optional[datetime]
+
+
+class UpdateUserProfileRequest(BaseModel):
+    # Request body for updating user profile (non-admin settings)
+    display_name: Optional[str] = None
 
 
 class UserResponse(BaseModel):
@@ -1342,6 +1348,7 @@ class UserResponse(BaseModel):
 
     id: str
     username: str
+    display_name: Optional[str] = None
     is_admin: bool
     is_disabled: bool
     created_at: datetime
@@ -3215,6 +3222,54 @@ async def get_current_user_info(
     return UserInfoResponse(
         user_id=user.id,
         username=user.username,
++        display_name=user.display_name,
+        is_admin=user.is_admin,
+        last_login=user.last_login
+    )
+
+
+@app.patch("/api/auth/profile", response_model=UserInfoResponse)
+async def update_user_profile(
+    profile_data: UpdateUserProfileRequest,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+    db: Session = Depends(get_db_session)
+):
+    # Update current user's profile settings (display name, etc.)
+    user = db.query(User).filter(User.id == current_user["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Update display name if provided
+    if profile_data.display_name is not None:
+        # Validate display name length and content
+        if len(profile_data.display_name.strip()) == 0:
+            user.display_name = None  # Empty string becomes None
+        elif len(profile_data.display_name.strip()) > 100:
+            raise HTTPException(status_code=400, detail="Display name too long (max 100 characters)")
+        else:
+            user.display_name = profile_data.display_name.strip()
+    
+    # Update timestamp
+    user.updated_at = datetime.now(timezone.utc)
+    
+    try:
+        db.commit()
+        
+        # Log the profile update
+        client_ip = get_client_ip(request)
+        await emit_log("INFO", "Authentication", 
+                      f"User '{user.username}' updated profile (display name: '{user.display_name or 'None'}') from {client_ip}")
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update profile")
+    
+    return UserInfoResponse(
+        user_id=user.id,
+        username=user.username,
+        display_name=user.display_name,
+        display_name=user.display_name,
         is_admin=user.is_admin,
         last_login=user.last_login
     )

@@ -6939,3 +6939,116 @@ async function pollForServerRestart() {
     // Start polling
     checkServer();
 }
+
+/**
+ * User Profile Modal Functions
+ * Handles opening, closing, and saving user profile settings
+ */
+
+// Open user profile modal and load current user info
+async function openUserProfileModal() {
+    try {
+        const response = await fetch('/api/auth/me', {
+            headers: {
+                'Authorization': `Bearer ${AUTH.getToken()}`
+            }
+        });
+
+        if (response.ok) {
+            const userInfo = await response.json();
+            
+            // Populate form fields
+            document.getElementById('profile-username').value = userInfo.username;
+            document.getElementById('profile-display-name').value = userInfo.display_name || '';
+            
+            // Show modal
+            document.getElementById('user-profile-modal').style.display = 'block';
+        } else {
+            showToast('Failed to load user information', 'error');
+        }
+    } catch (error) {
+        console.error('Error loading user info:', error);
+        showToast('Failed to load user information', 'error');
+    }
+}
+
+// Close user profile modal
+function closeUserProfileModal() {
+    document.getElementById('user-profile-modal').style.display = 'none';
+}
+
+// Save user profile changes
+async function saveUserProfile() {
+    const displayName = document.getElementById('profile-display-name').value.trim();
+    const saveButton = document.getElementById('user-profile-save');
+    
+    // Disable save button to prevent double-clicks
+    saveButton.disabled = true;
+    saveButton.textContent = 'Saving...';
+    
+    try {
+        const response = await fetch('/api/auth/profile', {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${AUTH.getToken()}`
+            },
+            body: JSON.stringify({
+                display_name: displayName || null
+            })
+        });
+
+        if (response.ok) {
+            const updatedUser = await response.json();
+            showToast('Profile updated successfully!', 'success');
+            
+            // Update the stored user info
+            if (AUTH._userInfo) {
+                AUTH._userInfo.display_name = updatedUser.display_name;
+            }
+            
+            // Close modal
+            closeUserProfileModal();
+        } else {
+            const errorData = await response.json();
+            showToast(errorData.detail || 'Failed to update profile', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving profile:', error);
+        showToast('Failed to update profile', 'error');
+    } finally {
+        // Re-enable save button
+        saveButton.disabled = false;
+        saveButton.textContent = 'Save Changes';
+    }
+}
+
+// Initialize user profile modal event listeners
+function initUserProfileModal() {
+    const userIconBtn = document.getElementById('user-icon-btn');
+    const modal = document.getElementById('user-profile-modal');
+    const closeBtn = document.getElementById('user-profile-modal-close');
+    const cancelBtn = document.getElementById('user-profile-cancel');
+    const saveBtn = document.getElementById('user-profile-save');
+    
+    if (userIconBtn) userIconBtn.addEventListener('click', openUserProfileModal);
+    if (closeBtn) closeBtn.addEventListener('click', closeUserProfileModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeUserProfileModal);
+    if (saveBtn) saveBtn.addEventListener('click', saveUserProfile);
+    
+    // Close modal on outside click
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal')) {
+                closeUserProfileModal();
+            }
+        });
+    }
+}
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initUserProfileModal);
+} else {
+    initUserProfileModal();
+}

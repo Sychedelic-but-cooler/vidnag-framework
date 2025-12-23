@@ -145,6 +145,7 @@ class User(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     username = Column(String, unique=True, nullable=False, index=True)
+    display_name = Column(String, nullable=True)  # User-customizable display name
     password_hash = Column(String, nullable=True)  # Nullable for OIDC-only users
     is_disabled = Column(Boolean, default=False, nullable=False, index=True)
     is_admin = Column(Boolean, default=False, nullable=False)

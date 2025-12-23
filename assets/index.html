@@ -1229,6 +1229,35 @@
         </div>
     </div>
 
+    <!-- User Profile Modal -->
+    <div id="user-profile-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>👤 User Profile</h2>
+                <button class="modal-close" id="user-profile-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="user-profile-form">
+                    <div class="form-group">
+                        <label for="profile-username">Username</label>
+                        <input type="text" id="profile-username" readonly class="readonly">
+                        <p class="form-help">Username cannot be changed</p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="profile-display-name">Display Name</label>
+                        <input type="text" id="profile-display-name" maxlength="100" placeholder="Enter a display name (optional)">
+                        <p class="form-help">This name will be shown in the interface instead of your username</p>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="user-profile-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="user-profile-save">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Create/Edit User Modal -->
     <div id="user-modal" class="modal" style="display: none;">
         <div class="modal-content">
