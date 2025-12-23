@@ -53,12 +53,8 @@
         }
         
         .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
             margin-bottom: 20px;
-            flex-wrap: wrap;
-            gap: 15px;
+            text-align: center;
         }
         
         h1 {
@@ -68,14 +64,6 @@
             -webkit-text-fill-color: transparent;
             background-clip: text;
             word-break: break-word;
-            flex: 1;
-            min-width: 300px;
-        }
-        
-        .action-buttons {
-            display: flex;
-            gap: 10px;
-            flex-shrink: 0;
         }
         
         .btn {
@@ -180,42 +168,7 @@
             font-size: 1.1rem;
         }
         
-        .share-url {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 20px;
-        }
-        
-        .share-url h3 {
-            color: #00FFFF;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 10px;
-        }
-        
-        .url-input-group {
-            display: flex;
-            gap: 10px;
-        }
-        
-        .url-input {
-            flex: 1;
-            padding: 10px;
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 6px;
-            color: #fff;
-            font-family: monospace;
-            font-size: 0.9rem;
-        }
-        
-        .url-input:focus {
-            outline: none;
-            border-color: #00FFFF;
-        }
+
         
         .powered-by {
             text-align: center;
@@ -266,24 +219,8 @@
                 padding: 20px;
             }
             
-            .header {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            
             h1 {
                 font-size: 1.5rem;
-                min-width: auto;
-                text-align: center;
-            }
-            
-            .action-buttons {
-                justify-content: center;
-            }
-            
-            .btn {
-                flex: 1;
-                justify-content: center;
             }
             
             video {
@@ -292,10 +229,6 @@
             
             .info-grid {
                 grid-template-columns: 1fr;
-            }
-            
-            .url-input-group {
-                flex-direction: column;
             }
         }
         
@@ -311,10 +244,6 @@
             h1 {
                 font-size: 1.3rem;
             }
-            
-            .action-buttons {
-                flex-direction: column;
-            }
         }
     </style>
 </head>
@@ -322,14 +251,6 @@
     <div class="container">
         <div class="header">
             <h1>__FILENAME__</h1>
-            <div class="action-buttons">
-                <button class="btn btn-primary" onclick="copyShareLink()" title="Copy share link to clipboard">
-                    <span>📋</span> Copy Link
-                </button>
-                <a class="btn btn-secondary" href="__VIDEO_URL__" download="__FILENAME__" title="Download video file">
-                    <span>⬇️</span> Download
-                </a>
-            </div>
         </div>
         
         <div class="video-container">
@@ -363,23 +284,12 @@
             </div>
         </div>
         
-        <div class="share-url">
-            <h3>Share this video</h3>
-            <div class="url-input-group">
-                <input type="text" class="url-input" id="share-url-input" readonly>
-                <button class="btn btn-primary" onclick="copyShareLink()">Copy</button>
-            </div>
-        </div>
-        
         <div class="powered-by">
             Powered by <a href="/">Vidnag Framework</a>
         </div>
     </div>
 
     <script>
-        // Initialize share URL
-        document.getElementById('share-url-input').value = window.location.href;
-        
         // Video metadata handling
         const video = document.getElementById('main-video');
         
@@ -397,38 +307,7 @@
             document.getElementById('video-duration').textContent = 'Unknown';
             document.getElementById('video-size').textContent = 'Unknown';
         });
-        
-        // Copy share link to clipboard
-        function copyShareLink() {
-            const input = document.getElementById('share-url-input');
-            input.select();
-            input.setSelectionRange(0, 99999); // For mobile devices
-            
-            try {
-                const successful = document.execCommand('copy');
-                if (successful) {
-                    showToast('Share link copied to clipboard!', 'success');
-                } else {
-                    fallbackCopyTextToClipboard(input.value);
-                }
-            } catch (err) {
-                fallbackCopyTextToClipboard(input.value);
-            }
-        }
-        
-        // Fallback copy method
-        function fallbackCopyTextToClipboard(text) {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(function() {
-                    showToast('Share link copied to clipboard!', 'success');
-                }, function(err) {
-                    showToast('Failed to copy link', 'error');
-                    console.error('Could not copy text: ', err);
-                });
-            } else {
-                showToast('Copy not supported on this device', 'error');
-            }
-        }
+
         
         // Format duration in MM:SS or HH:MM:SS format
         function formatDuration(seconds) {
@@ -447,58 +326,83 @@
             }
         }
         
-        // Get video file size
+        // Get video file size with multiple detection methods
         async function getVideoFileSize() {
             const sizeElement = document.getElementById('video-size');
+            const videoUrl = video.currentSrc || video.src;
             
+            // Method 1: Try to get from video element buffered ranges
+            if (video.buffered && video.buffered.length > 0) {
+                try {
+                    // Calculate approximate size from buffered data and duration
+                    const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                    const totalDuration = video.duration;
+                    if (bufferedEnd > 10 && totalDuration > 0) { // Need at least 10 seconds buffered
+                        // Estimate based on buffered portion
+                        const bufferRatio = bufferedEnd / totalDuration;
+                        if (bufferRatio > 0.1) { // At least 10% buffered
+                            const response = await fetch(videoUrl, {
+                                headers: { 'Range': `bytes=0-${Math.floor(bufferRatio * 1000000)}` },
+                                cache: 'no-cache'
+                            });
+                            const partialSize = parseInt(response.headers.get('Content-Length') || '0');
+                            if (partialSize > 0) {
+                                const estimatedTotal = Math.floor(partialSize / bufferRatio);
+                                sizeElement.textContent = formatFileSize(estimatedTotal);
+                                return;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.log('Buffered size estimation failed:', e);
+                }
+            }
+            
+            // Method 2: Direct HEAD request
             try {
-                const videoUrl = video.currentSrc || video.src;
-                
-                // First try HEAD request
-                const response = await fetch(videoUrl, { 
+                const headResponse = await fetch(videoUrl, { 
                     method: 'HEAD',
-                    cache: 'no-cache'
+                    cache: 'no-cache',
+                    mode: 'cors'
                 });
                 
-                const contentLength = response.headers.get('Content-Length');
-                
-                if (contentLength && parseInt(contentLength) > 0) {
-                    const size = formatFileSize(parseInt(contentLength));
-                    sizeElement.textContent = size;
+                const contentLength = headResponse.headers.get('Content-Length');
+                if (contentLength && parseInt(contentLength) > 100) { // Sanity check
+                    sizeElement.textContent = formatFileSize(parseInt(contentLength));
                     return;
                 }
-                
-                // Fallback: Try range request for first byte
+            } catch (e) {
+                console.log('HEAD request failed:', e);
+            }
+            
+            // Method 3: Partial range request
+            try {
                 const rangeResponse = await fetch(videoUrl, {
-                    headers: { 'Range': 'bytes=0-0' },
-                    cache: 'no-cache'
+                    headers: { 'Range': 'bytes=0-1023' }, // First 1KB
+                    cache: 'no-cache',
+                    mode: 'cors'
                 });
                 
                 const contentRange = rangeResponse.headers.get('Content-Range');
                 if (contentRange) {
-                    // Content-Range format: "bytes 0-0/total_size"
                     const match = contentRange.match(/\/([0-9]+)$/);
-                    if (match) {
-                        const totalSize = parseInt(match[1]);
-                        const size = formatFileSize(totalSize);
-                        sizeElement.textContent = size;
+                    if (match && parseInt(match[1]) > 100) {
+                        sizeElement.textContent = formatFileSize(parseInt(match[1]));
                         return;
                     }
                 }
-                
-                // Final fallback: estimate from video duration and bitrate
-                if (video.duration && video.videoWidth && video.videoHeight) {
-                    // Rough estimate: assume 1-2 Mbps for typical web video
-                    const estimatedBitrate = 1500000; // 1.5 Mbps in bits per second
-                    const estimatedBytes = (video.duration * estimatedBitrate) / 8;
-                    const size = formatFileSize(Math.round(estimatedBytes));
-                    sizeElement.textContent = size + ' (estimated)';
-                } else {
-                    sizeElement.textContent = 'Unknown';
-                }
-                
-            } catch (error) {
-                console.error('Failed to get video file size:', error);
+            } catch (e) {
+                console.log('Range request failed:', e);
+            }
+            
+            // Method 4: Estimate from video properties
+            if (video.duration && video.videoWidth && video.videoHeight) {
+                const pixels = video.videoWidth * video.videoHeight;
+                const quality = pixels > 1000000 ? 'high' : pixels > 400000 ? 'medium' : 'low';
+                const bitrates = { high: 2000000, medium: 1000000, low: 500000 };
+                const estimatedBytes = (video.duration * bitrates[quality]) / 8;
+                sizeElement.textContent = formatFileSize(Math.round(estimatedBytes)) + ' (est)';
+            } else {
                 sizeElement.textContent = 'Unknown';
             }
         }
@@ -543,26 +447,11 @@
                     video.pause();
                 }
             }
-            
-            // Ctrl/Cmd + C to copy share link
-            if ((e.ctrlKey || e.metaKey) && e.key === 'c' && e.target === document.body) {
-                e.preventDefault();
-                copyShareLink();
-            }
         });
         
-        // Prevent context menu on video (optional)
+        // Prevent context menu on video
         video.addEventListener('contextmenu', function(e) {
-            // Uncomment the next line to disable right-click on video
-            // e.preventDefault();
-        });
-        
-        // Page visibility API to pause video when tab is hidden (optional)
-        document.addEventListener('visibilitychange', function() {
-            if (document.hidden && !video.paused) {
-                // Optionally pause video when tab is not visible
-                // video.pause();
-            }
+            e.preventDefault();
         });
         
         // Initialize metadata on page load
