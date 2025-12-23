@@ -3222,7 +3222,7 @@ async def get_current_user_info(
     return UserInfoResponse(
         user_id=user.id,
         username=user.username,
-+        display_name=user.display_name,
+        display_name=user.display_name,
         is_admin=user.is_admin,
         last_login=user.last_login
     )
