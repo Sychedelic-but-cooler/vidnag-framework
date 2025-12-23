@@ -5709,8 +5709,15 @@ async def view_shared_video(token: str, request: Request, db: Session = Depends(
     created_at = share.created_at.strftime('%Y-%m-%d %H:%M UTC')
     
     # Generate absolute URLs for Open Graph meta tags
-    base_url = f"{request.url.scheme}://{request.url.netloc}"
+    # Handle HTTPS properly when behind a reverse proxy
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    if scheme not in ["http", "https"]:
+        scheme = "https"  # Default to HTTPS for security
+    
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    base_url = f"{scheme}://{host}"
     share_url = f"{base_url}/share/{token}"
+    
     # Provide fallback thumbnail if none available
     if thumbnail_url:
         thumbnail_url_absolute = f"{base_url}{thumbnail_url}"
