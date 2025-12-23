@@ -390,7 +390,39 @@ user_file_logger.propagate = False
 admin_settings_instance = get_admin_settings()
 
 # If CORS is disabled, use empty allowed_origins to block all cross-origin requests
+# EXCEPT for share endpoints which need to be accessible for embeds
 cors_allowed_origins = admin_settings_instance.cors.allowed_origins if admin_settings_instance.cors.enabled else []
+
+# Add a middleware to handle CORS for share endpoints specifically
+@app.middleware("http")
+async def share_cors_middleware(request: Request, call_next):
+    # Allow CORS for share endpoints regardless of global CORS setting
+    # This is necessary for Discord/social media embeds to work
+    if request.url.path.startswith('/share/'):
+        # Handle preflight requests
+        if request.method == "OPTIONS":
+            return Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                }
+            )
+        
+        # Process the request normally
+        response = await call_next(request)
+        
+        # Add CORS headers to the response
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+        return response
+    
+    # For non-share endpoints, continue normal processing
+    return await call_next(request)
+
 # Configure CORS Middleware
 app.add_middleware(
     CORSMiddleware,
@@ -5756,6 +5788,11 @@ def generate_share_error_page(title: str, message: str, emoji: str = "❌") -> s
 async def view_shared_video(token: str, request: Request, db: Session = Depends(get_db_session)):
     # Public endpoint to view a shared video, anyone with the link can view.
     from fastapi.responses import HTMLResponse
+
+    # Debug logging for Discord embed issues
+    user_agent = request.headers.get("user-agent", "")
+    client_ip = getattr(request.state, 'client_ip', 'unknown')
+    await emit_log("INFO", "Share", f"Share access: token={token}, UA={user_agent[:100]}, IP={client_ip}")
 
     # Look up the share token
     share = db.query(ShareToken).filter(ShareToken.token == token).first()
