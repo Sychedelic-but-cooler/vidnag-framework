@@ -411,10 +411,31 @@ async def rate_limit_middleware(request: Request, call_next):
     if not admin_settings.rate_limit.enabled:
         return await call_next(request)
 
-    # These scale with the number of downloads and would trigger false positives, excluded from rate limiting
-    # They're protected by: authentication, caching headers, and lazy loading
-    static_file_paths = ['/api/files/thumbnail/', '/api/files/video/']
-    if any(request.url.path.startswith(path) for path in static_file_paths):
+    # Exclude share endpoints and static files from rate limiting
+    # Share endpoints need to be accessible to social media crawlers
+    excluded_paths = [
+        '/api/files/thumbnail/', 
+        '/api/files/video/', 
+        '/share/'  # Add share endpoints to exclusion list
+    ]
+    if any(request.url.path.startswith(path) for path in excluded_paths):
+        return await call_next(request)
+
+    # Skip rate limiting for known social media crawlers/bots
+    user_agent = request.headers.get("user-agent", "").lower()
+    social_media_bots = [
+        'facebookexternalhit',  # Discord, Facebook
+        'discordbot',           # Discord
+        'twitterbot',           # Twitter  
+        'telegrambot',          # Telegram
+        'whatsapp',             # WhatsApp
+        'slackbot',             # Slack
+        'linkedinbot',          # LinkedIn
+        'skypeuripreview'       # Skype
+    ]
+    
+    if any(bot in user_agent for bot in social_media_bots):
+        await emit_log("INFO", "Security", f"Social media bot bypassing rate limit: {user_agent} accessing {request.url.path}")
         return await call_next(request)
 
     # Get client IP
