@@ -5643,7 +5643,7 @@ async function loadAppConfigForm() {
 
     // Load queue settings from settings.json
     try {
-        const response = await apiFetch(`${API_BASE}/api/settings`);
+        const response = await apiFetch(`${API_BASE}/api/settings/queue`);
         if (response.ok) {
             const settings = await response.json();
             document.getElementById('max-concurrent').value = settings.max_concurrent_downloads || 2;
