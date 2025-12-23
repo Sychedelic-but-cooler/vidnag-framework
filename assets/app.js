@@ -900,7 +900,9 @@ async function submitDownload(event) {
         // Clear form if at least one succeeded
         if (successCount > 0) {
             document.getElementById('video-url').value = '';
-            document.getElementById('download-visibility').value = 'public';
+            document.getElementById('download-visibility').value = getDefaultPrivacySetting();
+            // Mark that user hasn't manually modified the setting
+            delete document.getElementById('download-visibility').dataset.userModified;
         }
 
         // Refresh downloads list
@@ -3011,6 +3013,10 @@ function initPreferences() {
     const accessibility = localStorage.getItem('accessibility') === 'true';
     document.getElementById('accessibility-toggle').checked = accessibility;
     applyAccessibility(accessibility);
+
+    // Load default privacy preference
+    const defaultPrivacy = localStorage.getItem('defaultPrivacy') === 'true';
+    document.getElementById('default-privacy-toggle').checked = defaultPrivacy;
 }
 
 function applyTheme(theme) {
@@ -3072,6 +3078,27 @@ function toggleAccessibility() {
     const enabled = document.getElementById('accessibility-toggle').checked;
     applyAccessibility(enabled);
     showToast(`Accessibility features ${enabled ? 'enabled' : 'disabled'}`, 'info');
+}
+
+function toggleDefaultPrivacy() {
+    const enabled = document.getElementById('default-privacy-toggle').checked;
+    localStorage.setItem('defaultPrivacy', enabled);
+    showToast(`Default download privacy ${enabled ? 'enabled' : 'disabled'}`, 'info');
+
+    // Update the privacy toggle in the main form if it exists and is currently using default
+    const visibilitySelect = document.getElementById('download-visibility');
+    if (visibilitySelect) {
+        // Only update if the select hasn't been manually changed by the user
+        if (!visibilitySelect.dataset.userModified) {
+            visibilitySelect.value = enabled ? 'private' : 'public';
+        }
+    }
+}
+
+// Helper function to get default privacy setting
+function getDefaultPrivacySetting() {
+    const defaultPrivacy = localStorage.getItem('defaultPrivacy') === 'true';
+    return defaultPrivacy ? 'private' : 'public';
 }
 
 /**
@@ -3160,7 +3187,9 @@ function handleUrlInput(event) {
         // If multiple URLs, default to "None" and show feedback
         if (urls.length > 1) {
             cookieSelect.value = '';
-            document.getElementById('download-visibility').value = 'public';
+            document.getElementById('download-visibility').value = getDefaultPrivacySetting();
+            // Mark that user hasn't manually modified the setting
+            delete document.getElementById('download-visibility').dataset.userModified;
             hint.style.display = 'block';
             hint.className = 'cookie-hint info';
             hint.textContent = `ℹ️ Multiple URLs detected. Cookie selection disabled (downloads will use no cookies).`;
@@ -6254,6 +6283,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize preferences first
     initPreferences();
 
+    // Initialize download form with default privacy setting
+    const visibilitySelect = document.getElementById('download-visibility');
+    if (visibilitySelect) {
+        visibilitySelect.value = getDefaultPrivacySetting();
+        
+        // Track when user manually changes the privacy setting
+        visibilitySelect.addEventListener('change', function() {
+            this.dataset.userModified = 'true';
+        });
+    }
+
     // Load admin settings early so forms and tabs are populated on startup
     await loadAdminSettings();
 
@@ -6560,6 +6600,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('color-theme-select').addEventListener('change', changeColorTheme);
     document.getElementById('auto-cookie-toggle').addEventListener('change', toggleAutoCookie);
     document.getElementById('accessibility-toggle').addEventListener('change', toggleAccessibility);
+    document.getElementById('default-privacy-toggle').addEventListener('change', toggleDefaultPrivacy);
 
     // Logs controls
     document.getElementById('log-level-filter').addEventListener('change', filterLogs);
@@ -6962,7 +7003,9 @@ async function openUserProfileModal() {
             document.getElementById('profile-display-name').value = userInfo.display_name || '';
             
             // Show modal
-            document.getElementById('user-profile-modal').style.display = 'block';
+            const modal = document.getElementById('user-profile-modal');
+            modal.style.display = 'flex';
+            modal.classList.add('show');
         } else {
             showToast('Failed to load user information', 'error');
         }
@@ -6974,7 +7017,9 @@ async function openUserProfileModal() {
 
 // Close user profile modal
 function closeUserProfileModal() {
-    document.getElementById('user-profile-modal').style.display = 'none';
+    const modal = document.getElementById('user-profile-modal');
+    modal.style.display = 'none';
+    modal.classList.remove('show');
 }
 
 // Save user profile changes
