@@ -5704,6 +5704,8 @@ async def view_shared_video(token: str, request: Request, db: Session = Depends(
     thumbnail_url = f"/share/{token}/thumbnail" if download.thumbnail else None
     poster_attr = f'poster="{escape(thumbnail_url)}"' if thumbnail_url else ""
     video_url = f"/share/{token}/video"
+    # Create a direct-looking video URL for Discord
+    video_file_url = f"/share/{token}/video.mp4"
     filename = download.filename or 'Shared Video'
     view_count = str(share.view_count)
     created_at = share.created_at.strftime('%Y-%m-%d %H:%M UTC')
@@ -5741,6 +5743,7 @@ async def view_shared_video(token: str, request: Request, db: Session = Depends(
         .replace("__FILENAME__", escape(filename))
         .replace("__POSTER_ATTR__", poster_attr)
         .replace("__VIDEO_URL__", escape(video_url))
+        .replace("__VIDEO_FILE_URL__", f"{base_url}{video_file_url}")
         .replace("__VIEW_COUNT__", escape(view_count))
         .replace("__CREATED_AT__", escape(created_at))
         .replace("__SHARE_URL__", escape(share_url))
@@ -5810,6 +5813,65 @@ async def get_shared_video(token: str, db: Session = Depends(get_db_session)):
     headers = {
         'Cache-Control': 'public, max-age=3600, must-revalidate',
         'ETag': etag
+    }
+
+    return FileResponse(filepath, media_type=media_type, headers=headers)
+
+
+@app.get("/share/{token}/video.mp4")
+async def get_shared_video_mp4(token: str, db: Session = Depends(get_db_session)):
+    # Serve video file with .mp4 extension for better Discord embed compatibility
+    # This is essentially the same as get_shared_video but with a file-like URL
+    share = db.query(ShareToken).filter(ShareToken.token == token).first()
+    if not share:
+        raise HTTPException(status_code=404, detail="Share link not found")
+
+    # Get the download
+    download = DatabaseService.get_download_by_id(db, share.download_id)
+    if not download:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Verify video is still public
+    if not download.is_public:
+        raise HTTPException(status_code=403, detail="This video is no longer public")
+
+    # Verify video is completed
+    if download.status != DownloadStatus.COMPLETED:
+        raise HTTPException(status_code=404, detail="Video not available")
+
+    if not download.internal_filename:
+        raise HTTPException(status_code=404, detail="Video file not found")
+
+    # Use internal_filename (UUID-based) for file access
+    filepath = os.path.join("downloads", download.internal_filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Video file not found on disk")
+
+    # Security: Verify file extension
+    ext = os.path.splitext(download.internal_filename)[1].lower()
+    allowed_extensions = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v'}
+    if ext not in allowed_extensions:
+        raise HTTPException(status_code=403, detail="File type not allowed")
+
+    from fastapi.responses import FileResponse
+    media_types = {
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mkv': 'video/x-matroska',
+        '.avi': 'video/x-msvideo',
+        '.mov': 'video/quicktime'
+    }
+    media_type = media_types.get(ext, 'video/mp4')
+
+    # Add caching headers and Discord-friendly headers
+    file_stat = os.stat(filepath)
+    etag = f'"{download.internal_filename}-{int(file_stat.st_mtime)}"'
+
+    headers = {
+        'Cache-Control': 'public, max-age=3600, must-revalidate',
+        'ETag': etag,
+        'Content-Disposition': 'inline',  # Tell browsers to display inline
+        'Accept-Ranges': 'bytes'  # Support range requests for video players
     }
 
     return FileResponse(filepath, media_type=media_type, headers=headers)
