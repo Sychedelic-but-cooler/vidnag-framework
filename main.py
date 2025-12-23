@@ -5741,7 +5741,15 @@ async def view_shared_video(token: str, request: Request, db: Session = Depends(
         .replace("__DURATION__", escape(duration_formatted))
     )
 
-    return HTMLResponse(content=rendered)
+    # Add headers for better Discord compatibility
+    headers = {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'public, max-age=300',  # Cache for 5 minutes
+        'X-Frame-Options': 'ALLOWALL',  # Allow embedding
+        'X-Content-Type-Options': 'nosniff'
+    }
+
+    return HTMLResponse(content=rendered, headers=headers)
 
 
 @app.get("/share/{token}/video")

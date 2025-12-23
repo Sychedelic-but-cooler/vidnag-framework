@@ -6,7 +6,7 @@
     <title>__FILENAME__</title>
     
     <!-- Open Graph / Facebook -->
-    <meta property="og:type" content="video.other">
+    <meta property="og:type" content="video">
     <meta property="og:url" content="__SHARE_URL__">
     <meta property="og:title" content="__FILENAME__">
     <meta property="og:description" content="Watch this video shared via Vidnag Framework • Views: __VIEW_COUNT__ • Shared: __CREATED_AT__">
@@ -14,12 +14,14 @@
     <meta property="og:image:width" content="1280">
     <meta property="og:image:height" content="720">
     <meta property="og:image:alt" content="Video thumbnail for __FILENAME__">
-    <meta property="og:video" content="__VIDEO_URL__">
+    <meta property="og:video" content="__SHARE_URL__/video">
     <meta property="og:video:type" content="video/mp4">
+    <meta property="og:video:width" content="1280">
+    <meta property="og:video:height" content="720">
     <meta property="og:site_name" content="Vidnag Framework">
     
     <!-- Twitter Card -->
-    <meta name="twitter:card" content="player">
+    <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:url" content="__SHARE_URL__">
     <meta name="twitter:title" content="__FILENAME__">
     <meta name="twitter:description" content="Watch this video shared via Vidnag Framework • Views: __VIEW_COUNT__ • Shared: __CREATED_AT__">
@@ -46,7 +48,7 @@
         "description": "Watch this video shared via Vidnag Framework",
         "thumbnailUrl": "__THUMBNAIL_URL__",
         "uploadDate": "__CREATED_AT__",
-        "contentUrl": "__VIDEO_URL__",
+        "contentUrl": "__SHARE_URL__/video",
         "embedUrl": "__SHARE_URL__",
         "interactionStatistic": {
             "@type": "InteractionCounter",
